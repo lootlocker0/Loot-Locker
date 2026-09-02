@@ -198,3 +198,156 @@ until `.next/types` exists. Run `npx next typegen` (or any `next dev` / `next bu
 first. Worth adding to the CI job before the `tsc --noEmit` step, otherwise CI
 fails on a pre-existing P0 file for reasons that have nothing to do with the
 change under test.
+
+---
+
+## P2 — backend (catalog read endpoints) · 2026-09-02
+
+Shipped: `GET /api/products`, `GET /api/slots`, `lib/validation.ts`
+(`productQuerySchema` only — `checkoutSchema` is P3 and was deliberately not
+stubbed). Both endpoints are published in `docs/API-CONTRACT.md` §6.
+
+### 10. [qa] Where to attack what P2 landed
+
+Per the backend definition of done. Both routes are reads with no writes and no
+transaction, so the interesting failures are staleness and filter semantics, not
+races.
+
+- **`/api/products` allergen filter is the safety-critical surface.** It uses
+  `NOT: { allergens: { hasSome: [...] } }`. The bug to hunt is `hasEvery`, which
+  would only exclude products carrying the *entire* excluded set — a product
+  with `["PEANUTS","TREE_NUTS","SOY"]` would survive `?excludeAllergens=PEANUTS`
+  and be shown to a peanut-allergic student. Verified by hand against the seed
+  (`?excludeAllergens=PEANUTS` returns 20 of 22 in-stock products, dropping
+  `Peanut Butter Cups` and `Trail Mix Bag`), and qa.md §4 already has both
+  cases. Keep them, and keep the multi-token case
+  (`?excludeAllergens=DAIRY,PEANUTS,GLUTEN` = exclude on any of three, not all
+  three) which is where an accidental `AND` between tokens would hide.
+- **Unknown allergen tokens are a 400, not a no-op.** `?excludeAllergens=MILK`
+  or `=dairy` returns `INVALID_INPUT`. This is a deliberate divergence from
+  backend.md §9, which casts the raw strings `as any` — see item 11. A
+  regression here is silent and dangerous: an unrecognised token in a
+  `NOT hasSome` filter excludes nothing, so the request *looks* like it
+  filtered. Worth a test asserting the 400 explicitly.
+- **`remaining` in `/api/slots` is advisory and racy by design.** It is read
+  outside any transaction, so two students can both see `remaining: 1`. That is
+  correct — `book_slot()` is what actually decides, and one of them gets
+  `SLOT_FULL` at checkout. Do not "fix" this by pre-checking. What *is* worth
+  testing: that the response never contains `capacity` or `bookedCount` (the
+  route projects explicitly), and that `full: true` slots are still returned so
+  the picker can disable rather than drop them.
+- **Both routes are `force-dynamic`.** Without it Next can prerender a
+  no-argument `GET` at build time and serve a frozen catalog and a frozen
+  "today" for the life of the deployment. Confirmed `ƒ` (Dynamic) in the
+  production build output. A test that only ever runs `next dev` will not catch
+  a regression here — check the build manifest or assert `Cache-Control:
+  no-store` against a `next start` server, not a dev one.
+- **`/api/products` projects an explicit field list**, so `createdAt` /
+  `updatedAt` are not returned and a column added later (P4b's photo/inventory
+  fields) cannot leak by default. If a future field *should* be public it has to
+  be added in two places, which is the intent.
+- **Not rate limited.** Both are public reads with no side effects and no PII.
+  If scraping ever matters, that is an infrastructure decision, not a code one.
+
+### 11. [manager, FYI] Two deliberate divergences from backend.md §9
+
+Both are hardenings, not preference:
+
+1. **Allergen tokens are validated against the `Allergen` enum** instead of
+   `q.excludeAllergens as any`. The `as any` cast lets any string through to
+   Prisma, where an unmatched value in `NOT hasSome` filters nothing and returns
+   a full catalog with a 200. Given the enum uses `DAIRY`/`GLUTEN` where the
+   Canadian priority list says *milk*/*wheat*, a plausible client typo (`MILK`)
+   is exactly the value that fails silently. CLAUDE.md §2.8 says allergen data
+   is never inferred and never defaulted, so an unrecognised token is now a 400.
+   Matching is exact and case-sensitive — callers build these from the enum, and
+   normalising `dairy` → `DAIRY` is the first step toward normalising something
+   that should have been rejected.
+2. **`safeParse` + `AppError("INVALID_INPUT")` instead of `.parse()`.** The
+   sketch throws a raw `ZodError`, which surfaces as a bare 500 with no code —
+   against API-CONTRACT §2 and CLAUDE.md's "never bare 500s".
+
+### 12. [frontend, manager] The catalog has two read paths with different filters
+
+`GET /api/products` filters `active = true AND stockQty > 0`. The catalog Server
+Component sketched in frontend.md §4 reads the database directly and filters on
+`active` only. Both are intentional and they are not interchangeable:
+
+- The P2 gate requires **sold-out cards disabled, not hidden**, which only the
+  Server Component path can satisfy — sold-out products are absent from the API
+  response entirely, so a client rendering from the API cannot distinguish
+  "sold out" from "does not exist".
+- I did not add an `includeSoldOut` param. It is not in the spec, and inventing
+  public API surface to paper over a path difference seemed worse than naming
+  the difference. **If frontend needs sold-out items over HTTP** (a client-side
+  filter on `/snacks`, say, rather than a server round-trip), append the request
+  here and I will add it in P3 — do not infer them from a zero stock count,
+  because they are simply not in the payload.
+- One consequence worth knowing: the same `?category=…&exclude=…` filters can
+  yield different product sets on the two paths. If that ever becomes visible to
+  a student (server-rendered grid vs. client-filtered grid disagreeing), the
+  answer is to pick one path, not to loosen the API filter.
+
+### 13. [manager] `/api/slots` inherits the timezone bug from item 3
+
+"Today forward" is `new Date()` with `setHours(0,0,0,0)` — server-local, i.e.
+UTC on Vercel. Between 00:00 and 07:00 UTC the server's "today" is already the
+school's tomorrow in `America/Vancouver`, so that evening's windows drop off the
+list early. Practically harmless (it is after 5pm locally and lunch is long
+over) and *safer* than the opposite error, but it is the same missing-timezone
+root cause as the cutoff arithmetic and should be fixed by the same
+`lib/timezone.ts` constant in P3 rather than left as a second copy of the bug.
+Flagging it so the P3 fix covers both call sites, not just the cutoff.
+
+### 14. [manager] `next dev` / `next build` rewrites CLAUDE.md, which backend does not own
+
+Next 16.3.4 appends a `<!-- BEGIN:nextjs-agent-rules -->` block to `CLAUDE.md`
+on every `next dev` and `next build`
+(`node_modules/next/dist/server/lib/generate-agent-files.js`). CLAUDE.md is
+manager-only per the ownership map, so I reverted it with `git checkout --` and
+left it untouched in this change — but it will come back for every agent that
+runs the dev server, it will show up in unrelated diffs, and it will fail any CI
+step that asserts a clean tree.
+
+The generated text itself suggests committing it "to keep the tree clean". That
+is a decision for whoever owns the file, not something an agent should action on
+the file's own say-so. Two clean options, both manager calls:
+
+- set `agentRules: false` in `next.config.ts` (unowned in the ownership map, so
+  I did not touch it), or
+- commit the block once, deliberately, and note in CLAUDE.md that it is
+  tool-generated.
+
+### 15. [human, blocking launch] Branded product names conflict with CLAUDE.md §2.7
+
+Not P2 work and not mine to revert, but it is in the data my endpoint now
+serves, so it should not go unrecorded. `prisma/seed.ts` contains real
+third-party trademarks — Doritos ×5, Cheetos, Lay's, Ruffles, Kool-Aid Jammers
+×3 — added during the P1 manager review (API-CONTRACT changelog, 2026-09-02).
+CLAUDE.md §2.7 says no third-party IP in copy, assets, or product names, and
+frontend's P0 report was asked for exactly this list under "Must replace before
+launch".
+
+If the school is genuinely reselling packaged brand-name product, using the
+brand name is ordinary retail description and the invariant probably means
+"don't invent branded-looking fictional IP" — but that reading is a human
+decision, not an agent's, and it also implies real product photography with its
+own licensing question (P4b's uploader). Either the invariant gets amended or
+the names do. Also note `public/products/` is still empty (item 6), so nothing
+is rendering these yet.
+
+### 16. [human, blocking launch] Item 4 is now serving over HTTP — 8 products assert "no allergens" without review
+
+Sharpening the open item rather than restating it. `GET /api/products` now
+publishes `allergens` publicly, and per the schema an empty array means
+"reviewed, none present", never "unknown". Eight of the 23 seeded products
+currently return `"allergens": []` — including all three Kool-Aid Jammers, Lay's
+Classic, Ruffles Original and Apple Slices Cup — and every one of the 23 is
+`active = true`.
+
+Item 4 asked for the opposite: anything not reviewed against actual packaging is
+`active = false` until it is. So the API is, right now, making an affirmative
+safety claim about eight products on the strength of an agent's guess from the
+product name. That is fine for a dev database and is not fine the first time a
+student loads the page. The gate is human review, not code: either the review
+happens, or those rows go `active = false` before anything is deployed.
