@@ -1,26 +1,157 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * LootLockers design tokens.
+ * Source: design/stitch-export/battle_royale_loot_drop/DESIGN.md (token/style-guide
+ * export) reconciled against the six screen exports (home, the_locker, loadout,
+ * extraction_point, mission_briefing, victory_royale). Full reconciliation notes,
+ * contrast audit, and IP flags live in docs/DESIGN.md — read that before changing
+ * anything here.
+ */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@theme {
+  /* ---- Surfaces (Level 0-5, from the export's M3 surface ladder) ---- */
+  --color-void:          #07070F; /* page canvas, Level 0 */
+  --color-surface:       #13131B; /* base chrome (nav/footer), Level 1 */
+  --color-surface-2:     #1B1B24; /* surface-container-low: idle card bg */
+  --color-surface-3:     #1F1F28; /* surface-container: section bg, card hover */
+  --color-surface-4:     #292932; /* surface-container-high: elevated chrome */
+  --color-surface-5:     #34343E; /* surface-container-highest: brightest chrome (nav pill) */
+  --color-surface-lowest: #0D0D16; /* inset panels: hero banners, aside summaries */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* ---- Brand accent (non-rarity UI color: logo, nav, links, focus glow) ---- */
+  --color-brand:          #DDB7FF; /* export "primary" lavender */
+  --color-brand-container: #B76DFF; /* export "primary-container" mid-purple, hover/active accents */
+
+  /* ---- Gold (CTAs, price highlights, dividers - shares hue with Legendary) ---- */
+  --color-gold:           #F5C518;
+
+  /* ---- Rarity tiers -----
+   * Canonical values, matching CLAUDE.md's lib/rarity.ts contract (P1, backend-owned)
+   * and the prose "Colors" section of the Stitch DESIGN.md export. NOTE: the raw
+   * M3 swatches embedded in each screen's inline tailwind config (#988d9f/#4ade80/
+   * #3a91fb/#b76dff/#ffd65b) are Stitch scaffolding left over from its theme
+   * builder, not a deliberate second rarity spec - see docs/DESIGN.md
+   * "Reconciliation notes" for the full reasoning. Backend's lib/rarity.ts MUST
+   * use these same five hexes or card borders/glows (driven by inline style, not
+   * these tokens) will visually drift from chip/badge classes that do use them.
+   */
+  --color-rarity-common:    #9BA0A8;
+  --color-rarity-uncommon:  #38D64B;
+  --color-rarity-rare:      #1B7FE8;
+  --color-rarity-epic:      #A855F7;
+  --color-rarity-legendary: #F5C518;
+
+  /* ---- Text ---- */
+  --color-text:       #E4E1EE; /* export on-surface/on-background */
+  --color-text-dim:   #CFC2D6; /* export on-surface-variant: secondary copy */
+  --color-text-faint: #988D9F; /* export outline: meta/timestamp text only.
+                                   NEVER use outline-variant (#4D4354) as a text
+                                   color - it fails AA even on the void bg. */
+  --color-danger:     #FF4D4D;
+
+  /* ---- Fonts (export uses Bebas Neue / Archivo Narrow / JetBrains Mono,
+     not the Bungee/Inter pairing shown in the illustrative spec example) ---- */
+  --font-display: "Bebas Neue", system-ui, sans-serif;
+  --font-body:    "Archivo Narrow", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+
+  /* ---- Type scale (rem; source px values from the export's typography block) ---- */
+  --text-display:      clamp(2.5rem, 2rem + 3vw, 4.5rem);   /* display-xl: 72px desktop / ~40px mobile */
+  --text-headline-lg:  clamp(2rem, 1.75rem + 1.5vw, 3rem);  /* headline-lg: 48px desktop / 32px mobile */
+  --text-headline-md:  1.5rem;   /* 24px / line-height 28px, weight 700 */
+  --text-body-lg:      1.125rem; /* 18px / line-height 24px, weight 700 */
+  --text-body-md:      1rem;     /* 16px / line-height 22px, weight 600 */
+  --text-label-sm:     0.75rem;  /* 12px / line-height 16px, weight 700, mono */
+
+  /* ---- Spacing (export frontmatter: unit 4px, gutter/margins in px) ---- */
+  --spacing-unit:           0.25rem; /* 4px atomic unit */
+  --spacing-gutter:         1rem;    /* 16px grid gutter */
+  --spacing-margin-mobile:  1rem;    /* 16px */
+  --spacing-margin-desktop: 2rem;    /* 32px */
+
+  /* ---- Radii -----
+   * Shape language is intentionally sharp (clip-path, not border-radius) per the
+   * export's "Shapes" section. Only circular/pill chrome (credit counters, the
+   * rank badge circle) uses a radius at all.
+   */
+  --radius-none: 0px;
+  --radius-pill: 9999px;
+
+  /* ---- Shadows / rarity glows (rgba mirrors CLAUDE.md's lib/rarity.ts glow
+     values so glow colors stay in sync with badge/border colors) ---- */
+  --shadow-glow-common:    0 0 22px -6px rgba(155, 160, 168, .35);
+  --shadow-glow-uncommon:  0 0 22px -6px rgba(56, 214, 75, .40);
+  --shadow-glow-rare:      0 0 22px -6px rgba(27, 127, 232, .45);
+  --shadow-glow-epic:      0 0 22px -6px rgba(168, 85, 247, .50);
+  --shadow-glow-legendary: 0 0 22px -6px rgba(245, 197, 24, .55);
+  --shadow-panel:          0 20px 50px -12px rgba(0, 0, 0, .6);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-void);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+/*
+ * Clip-path catalog. Every angled edge in the export reduces to one of these
+ * nine polygons - see docs/DESIGN.md "Shard geometry" for a screen-by-screen
+ * map of which utility renders where.
+ */
+@layer utilities {
+  /* Primary bevel: wide buttons, pills, main CTAs */
+  .clip-shard {
+    clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+  }
+  /* Tighter bevel: chips, manifest/cart rows, small tags */
+  .clip-shard-tight {
+    clip-path: polygon(5% 0%, 100% 0%, 95% 100%, 0% 100%);
+  }
+  /* Accordion sections, payment-method cards, zone-status panels (both corners nicked) */
+  .clip-panel {
+    clip-path: polygon(0% 0%, 95% 0%, 100% 5%, 100% 100%, 5% 100%, 0% 95%);
+  }
+  /* Opposite-direction bevel: sticky order-summary asides */
+  .clip-panel-reverse {
+    clip-path: polygon(0% 0%, 96% 0%, 100% 100%, 4% 100%);
+  }
+  /* Deep four-corner cut: hero/confirmation summary cards */
+  .clip-card {
+    clip-path: polygon(0 0, 92% 0, 100% 8%, 100% 100%, 8% 100%, 0 92%);
+  }
+  /* Triangular tier badge in a card's top-right corner */
+  .clip-corner-badge {
+    clip-path: polygon(100% 0, 0 0, 100% 100%);
+  }
+  /* Sticky top nav notch */
+  .clip-header {
+    clip-path: polygon(0% 0%, 100% 0%, 100% 90%, 50% 100%, 0% 90%);
+  }
+  /* Mobile bottom tab bar */
+  .clip-bottom-nav {
+    clip-path: polygon(5% 0%, 95% 0%, 100% 100%, 0% 100%);
+  }
+  /* Diagonal hero banner bottom edge */
+  .clip-hero {
+    clip-path: polygon(0% 0%, 100% 0%, 100% 85%, 0% 100%);
+  }
+  /* Hexagon icon frame: deployment-protocol steps, progress-tracker step chips */
+  .clip-hex {
+    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  }
+}
+
+/* Focus is not decorative. A rarity glow is never a substitute for a focus ring. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-gold);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }
