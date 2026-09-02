@@ -1,5 +1,6 @@
 import Image from "next/image";
-import { rarityMeta, type Rarity, type Allergen } from "./rarity";
+import type { Rarity, Allergen } from "@prisma/client";
+import { rarityMeta } from "@/lib/rarity";
 import { ShardButton } from "./ShardButton";
 
 export function RarityCard({

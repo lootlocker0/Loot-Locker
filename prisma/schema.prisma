@@ -1,0 +1,311 @@
+// LootLockers data model.
+//
+// Owner: backend agent. Consumers: everyone (CLAUDE.md §1).
+//
+// Rules baked into this file (CLAUDE.md §2):
+//   · Money is Int cents. There is no Float/Decimal anywhere below.
+//   · Order lines snapshot name/price/rarity/allergens at purchase time and are
+//     never re-read from Product afterwards.
+//   · Stock and slot capacity move only through reserve_stock() / book_slot(),
+//     defined in prisma/migrations/manual_constraints.sql.
+//
+// Prisma cannot express CHECK constraints or SQL functions. Everything the
+// database must enforce beyond keys and types lives in
+// prisma/migrations/manual_constraints.sql, which is applied after
+// `prisma migrate deploy` (see docs/API-CONTRACT.md §"Database setup").
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 no longer accepts `url`/`directUrl` here. The migration connection
+// string lives in prisma.config.ts; the runtime connection is supplied by the
+// pg driver adapter in lib/db.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Must stay in lockstep with lib/rarity.ts. Adding a tier without adding it
+/// there is a compile error, which is the point.
+enum Rarity {
+  COMMON
+  UNCOMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+/// Health & safety data (CLAUDE.md §2.8). Canada's priority allergen list, with
+/// DAIRY rather than MILK and GLUTEN rather than WHEAT because those are the
+/// values the test suite and the UI copy use.
+///
+/// Never infer, never default. An empty array means "reviewed and none present",
+/// not "unknown" — a product whose allergens have not been reviewed must not be
+/// `active`.
+enum Allergen {
+  PEANUTS
+  TREE_NUTS
+  DAIRY
+  EGGS
+  GLUTEN
+  SOY
+  SESAME
+  FISH
+  SHELLFISH
+  MUSTARD
+  SULPHITES
+}
+
+enum PaymentMethod {
+  CARD
+  CASH_AT_PICKUP
+}
+
+/// Order lifecycle. Every value here is referenced by the checkout transaction,
+/// the Stripe webhook handler, lib/db/release.ts or the expiry sweep.
+///
+///   PENDING    created, stock+seat held. CARD orders carry `expiresAt`.
+///   RESERVED   cash order, awaiting pickup. Counts against the daily spend cap.
+///   PAID       Stripe webhook confirmed payment. Only the webhook sets this.
+///   PACKED     staff bagged it.
+///   PICKED_UP  handed to the student. Terminal, happy.
+///   CANCELLED  payment failed or staff cancelled. Stock and seat released.
+///   EXPIRED    TTL elapsed before payment. Stock and seat released by the sweep.
+///   REFUNDED   money returned. Stock is NOT auto-returned; staff adjusts stock
+///              by hand because the snack may already be packed or eaten.
+enum OrderStatus {
+  PENDING
+  RESERVED
+  PAID
+  PACKED
+  PICKED_UP
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Catalog
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Product {
+  id String @id @default(cuid())
+
+  /// Stable human-readable key. Seeds and fixtures upsert on this, so a re-run
+  /// updates rather than duplicates. Never shown to students as an id.
+  slug String @unique
+
+  name        String
+  description String
+
+  /// Integer cents. Never a float, never a string.
+  priceCents Int @map("price_cents")
+
+  /// Free text at the DB level, but the API only accepts and only documents
+  /// four values: sweet | savory | drinks | healthy (lib/validation.ts
+  /// productQuerySchema). Deliberately not a Postgres enum: the catalog page
+  /// and the products route both pass a plain string through to Prisma, and an
+  /// enum there costs a cast at every call site for a field that is cosmetic
+  /// filtering, not safety data.
+  category String
+
+  rarity Rarity
+
+  /// Safety-critical. See the Allergen enum.
+  allergens Allergen[]
+
+  /// Decremented only by reserve_stock(), incremented only by the release path
+  /// or a staff adjustment. `stock_non_negative` in manual_constraints.sql is
+  /// the backstop if anything ever writes it directly.
+  stockQty Int @map("stock_qty")
+
+  active   Boolean @default(true)
+  imageUrl String  @map("image_url")
+
+  sortOrder Int @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  orderItems OrderItem[]
+
+  // Catalog read path: active + in stock, ordered by sortOrder then name.
+  @@index([active, sortOrder])
+  @@index([category])
+  @@map("products")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pickup
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PickupSlot {
+  id String @id @default(cuid())
+
+  /// Student-facing name of the window, e.g. "Lunch A".
+  label String
+
+  /// Local wall-clock start, 24h "HH:MM". Parsed by the cutoff check.
+  startTime String @map("start_time")
+
+  /// Physical handout point, e.g. "Locker bank C".
+  location String
+
+  /// Midnight (local) of the service day. Stored as a full timestamp rather
+  /// than a DATE because the cutoff check does
+  /// `new Date(serviceDate).setHours(h, m)` — a DATE column comes back as UTC
+  /// midnight and that arithmetic then lands on the wrong day west of
+  /// Greenwich. See docs/HANDOFF.md — timezone handling is an open item.
+  serviceDate DateTime @map("service_date")
+
+  /// Physical handout throughput, not aspiration. School sign-off item.
+  capacity Int
+
+  /// Only ever moved by book_slot() (up) and the release path (down).
+  /// `booked_within_capacity` in manual_constraints.sql is the backstop.
+  bookedCount Int @default(0) @map("booked_count")
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  orders Order[]
+
+  // One window per (day, time, place). Makes the seed idempotent and stops a
+  // duplicated slot from silently doubling real capacity.
+  @@unique([serviceDate, startTime, location])
+  @@index([active, serviceDate])
+  @@map("pickup_slots")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orders
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Order {
+  id String @id @default(cuid())
+
+  /// "LL-#####". Unique globally; generated with retry-on-collision, never
+  /// pre-checked.
+  orderNumber String @unique @map("order_number")
+
+  /// Four characters from an unambiguous alphabet, read aloud at the locker.
+  /// Unique per slot only — see @@unique below.
+  pickupCode String @map("pickup_code")
+
+  // PII. Never in a URL, a log line, or an analytics payload (CLAUDE.md §2.6).
+  studentName String  @map("student_name")
+  email       String
+  phone       String
+  homeroom    String?
+
+  slotId String     @map("slot_id")
+  slot   PickupSlot @relation(fields: [slotId], references: [id], onDelete: Restrict)
+
+  paymentMethod PaymentMethod @map("payment_method")
+  status        OrderStatus   @default(PENDING)
+
+  // Integer cents. `order_total_consistent` in manual_constraints.sql enforces
+  // total = subtotal + tax at the database level.
+  subtotalCents Int @map("subtotal_cents")
+  taxCents      Int @default(0) @map("tax_cents")
+  totalCents    Int @map("total_cents")
+
+  /// Set after the PaymentIntent is created. Unique so a webhook can look an
+  /// order up by intent and so one intent can never map to two orders.
+  stripePaymentIntentId String? @unique @map("stripe_payment_intent_id")
+
+  /// Only set for PENDING card orders. Cleared when the order leaves PENDING.
+  expiresAt DateTime? @map("expires_at")
+
+  /// Set by the webhook, never by the client.
+  paidAt DateTime? @map("paid_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  items OrderItem[]
+
+  // Read aloud in a hallway: the code only has to be unique within the window
+  // it is presented in. 26^4 over one slot is plenty; globally unique 4-char
+  // codes would collide constantly and force ugly retries.
+  @@unique([slotId, pickupCode])
+  // Daily spend cap aggregate: WHERE email = ? AND createdAt >= ?
+  @@index([email, createdAt])
+  // Expiry sweep: WHERE status = 'PENDING' AND expiresAt < now()
+  @@index([status, expiresAt])
+  // Admin pick list: today's orders grouped by slot.
+  @@index([slotId, status])
+  @@map("orders")
+}
+
+/// Immutable purchase record. Every display surface — cart line, confirmation,
+/// admin pick list — reads these snapshots, never the live Product. Correcting
+/// a product's allergens must not rewrite what a student was already handed.
+model OrderItem {
+  id String @id @default(cuid())
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// Kept for stock accounting and restock-on-release. Restrict, not Cascade:
+  /// deleting a product must not erase purchase history.
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  qty Int
+
+  // ── snapshots, written once at order creation ──
+  nameSnapshot      String     @map("name_snapshot")
+  unitPriceCents    Int        @map("unit_price_cents")
+  raritySnapshot    Rarity     @map("rarity_snapshot")
+  allergensSnapshot Allergen[] @map("allergens_snapshot")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // checkoutSchema rejects duplicate product lines in one cart; this is the
+  // database saying the same thing, so a bug cannot produce two lines for one
+  // product and a confusing pick list.
+  @@unique([orderId, productId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Infrastructure
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Stripe webhook replay defence. `id` is the Stripe event id, used directly as
+/// the primary key: the insert itself is the deduplication, so concurrent
+/// deliveries of the same event race on a unique violation instead of on a
+/// check-then-insert that both sides win.
+model WebhookEvent {
+  id   String @id
+  type String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("webhook_events")
+}
+
+/// Runtime knobs read by lib/settings.ts. Values are stored as text and parsed
+/// with Number(); lib/settings.ts falls back to its own defaults when a row is
+/// missing or unparseable, so an empty table is safe.
+///
+/// Known keys: daily_spend_cap_cents, order_cutoff_minutes, tax_rate_bps,
+/// pending_order_ttl_minutes. Changing the spend cap or the tax rate is a
+/// human decision (CLAUDE.md §7), not an agent one.
+model Setting {
+  key   String @id
+  value String
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
