@@ -59,7 +59,7 @@ testDb = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
 — so set `DIRECT_URL` (or `DATABASE_URL`) in the env you pass to `execSync`, as
 you already do.
 
-### 3. [human, escalation] Slot cutoff arithmetic has no timezone — this can close ordering on the wrong day
+### ~~3. [human, escalation] Slot cutoff arithmetic has no timezone — this can close ordering on the wrong day~~ RESOLVED (zone confirmed, fix still due in P3)
 
 `PickupSlot.serviceDate` is stored as local midnight of the service day and
 `startTime` as a `"HH:MM"` wall clock. The cutoff check in backend.md §3 does:
@@ -76,9 +76,12 @@ either closes early or stays open past the bell.
 
 This is not fixable in the schema alone. Before P3 ships:
 
-- confirm the school's IANA timezone (`America/Vancouver`? `America/Toronto`?),
-- pin it as a constant and compute `slotAt` in that zone explicitly rather than
-  relying on `TZ`,
+- ~~confirm the school's IANA timezone (`America/Vancouver`? `America/Toronto`?)~~
+  — **confirmed by the manager: `America/Vancouver`.**
+- pin it as a constant (e.g. `lib/timezone.ts` exporting `SCHOOL_TZ = "America/Vancouver"`)
+  and compute `slotAt` in that zone explicitly (e.g. via `Intl.DateTimeFormat`'s
+  offset for the zone, or a small library) rather than relying on `TZ` or
+  server-local `setHours` — still P3 backend's job, not done yet.
 - have qa's cutoff test run under a non-UTC `TZ` — a UTC-only test passes against
   this bug.
 
