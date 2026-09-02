@@ -175,6 +175,52 @@ fallback included (print the list before service starts).
 
 ---
 
+## P4b · Restricted inventory editor — new requirement, folded into P4
+
+The product owner wants day-to-day catalog upkeep (adding products and
+photos, setting which item/type it is, keeping quantity current) handled by
+two 13-year-old family members, with the site itself — checkout, payments,
+order data, any student PII — explicitly and completely off their hands.
+That's a permissions boundary, not just a UI simplification, so it's a
+distinct role from the P4 staff admin above, not a stripped-down view of it.
+
+**Scope, explicitly:**
+- Can: create/edit a product's name, category/type, price, photo, allergens,
+  active flag, and stock quantity.
+- Cannot reach, at the route/auth level, not just hidden in the UI: orders,
+  order items, customer name/email/phone/homeroom, payment status, refunds,
+  Stripe anything, settings (spend cap / cutoff / tax). None of that data
+  should even be queryable through this role's session — this is an
+  authorization boundary, not a navigation one.
+
+**Proposed approach** (flag now if any of this is wrong before backend
+builds it in P4):
+- A separate `/inventory` route and its own session cookie/secret
+  (`INVENTORY_SESSION_SECRET`, alongside `ADMIN_SESSION_SECRET` in `.env`),
+  not a role flag inside the existing admin auth — so a bug in one can't
+  leak into the other's scope.
+- The route touches `Product` only. No `Order`/`OrderItem`/`Setting` model
+  is reachable from any API route this session can hit — enforced server-side,
+  since a 13-year-old's browser is not a security boundary a teenager should
+  be relied on to respect on purpose or by accident.
+- Photo upload needs real object storage (a raw `<input type=file>` writing
+  into `public/` doesn't survive a redeploy and isn't multi-editor-safe).
+  Defaulting to Vercel Blob since BUILDPLAN.md already assumes a Vercel
+  deploy for the cron job — flag if that's wrong and something else
+  (S3, Cloudflare R2, Supabase Storage) is preferred.
+- Allergen fields stay mandatory on every product this role creates —
+  CLAUDE.md invariant #8 doesn't get relaxed because the person entering
+  data is younger; if anything a required, plain checklist UI (not free text)
+  matters more here.
+
+This is scoped as an extension of P4, not a new phase — same backend/frontend
+split, built once `Product` (P1) and the base catalog (P2) exist. Not
+starting on it yet; P1 is still in flight. Recording it here now so it isn't
+lost, and so backend's P1 schema work doesn't need a second pass once this
+lands.
+
+---
+
 ## P5 · Hardening and launch — 2 days
 
 ```
