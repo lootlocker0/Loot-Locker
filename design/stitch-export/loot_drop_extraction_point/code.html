@@ -1,0 +1,395 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Archivo+Narrow:wght@400;600;700&amp;family=JetBrains+Mono:wght@700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@100..900&amp;family=Bebas+Neue:wght@100..900&amp;family=JetBrains+Mono:wght@100..900&amp;display=swap" rel="stylesheet">
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 48;
+        }
+        
+        .shard-clip {
+            clip-path: polygon(5% 0%, 100% 0%, 95% 100%, 0% 100%);
+        }
+
+        .hex-clip {
+            clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+        }
+
+        .button-clip {
+            clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+        }
+
+        .slant-card {
+            clip-path: polygon(0% 0%, 95% 0%, 100% 5%, 100% 100%, 5% 100%, 0% 95%);
+        }
+
+        @keyframes scan {
+            0% { transform: translateX(-100%) skewX(-15deg); }
+            100% { transform: translateX(200%) skewX(-15deg); }
+        }
+
+        .scan-effect:hover::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+            animation: scan 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .glitch-border {
+            box-shadow: 0 0 10px rgba(167, 200, 255, 0.3);
+        }
+
+        input:focus {
+            box-shadow: 0 0 15px rgba(167, 200, 255, 0.5);
+            outline: none;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #13131b;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #ddb7ff;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-secondary": "#3d2f00",
+                      "outline": "#988d9f",
+                      "surface-container-high": "#292932",
+                      "on-primary-fixed-variant": "#6900b3",
+                      "on-tertiary-container": "#002a55",
+                      "on-secondary-fixed": "#241a00",
+                      "inverse-surface": "#e4e1ee",
+                      "surface-container-low": "#1b1b24",
+                      "secondary": "#ffd65b",
+                      "secondary-container": "#e7b900",
+                      "inverse-primary": "#842bd2",
+                      "on-tertiary": "#003061",
+                      "surface-tint": "#ddb7ff",
+                      "surface-bright": "#393842",
+                      "surface": "#13131b",
+                      "surface-container-lowest": "#0d0d16",
+                      "primary": "#ddb7ff",
+                      "on-secondary-container": "#5f4a00",
+                      "secondary-fixed": "#ffe08b",
+                      "inverse-on-surface": "#302f39",
+                      "error-container": "#93000a",
+                      "tertiary-container": "#3a91fb",
+                      "surface-container-highest": "#34343e",
+                      "surface-container": "#1f1f28",
+                      "primary-fixed-dim": "#ddb7ff",
+                      "surface-variant": "#34343e",
+                      "on-primary": "#490080",
+                      "on-background": "#e4e1ee",
+                      "on-tertiary-fixed": "#001b3c",
+                      "tertiary-fixed": "#d5e3ff",
+                      "on-error": "#690005",
+                      "primary-container": "#b76dff",
+                      "background": "#13131b",
+                      "on-secondary-fixed-variant": "#584400",
+                      "on-surface": "#e4e1ee",
+                      "outline-variant": "#4d4354",
+                      "on-primary-container": "#400071",
+                      "tertiary-fixed-dim": "#a7c8ff",
+                      "on-surface-variant": "#cfc2d6",
+                      "on-tertiary-fixed-variant": "#004689",
+                      "on-primary-fixed": "#2c0051",
+                      "tertiary": "#a7c8ff",
+                      "secondary-fixed-dim": "#f0c110",
+                      "surface-dim": "#13131b",
+                      "error": "#ffb4ab",
+                      "on-error-container": "#ffdad6",
+                      "primary-fixed": "#f0dbff"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "margin-mobile": "16px",
+                      "unit": "4px",
+                      "margin-desktop": "32px",
+                      "shard-angle": "15deg",
+                      "gutter": "16px"
+              },
+              "fontFamily": {
+                      "headline-lg": ["Bebas Neue"],
+                      "body-lg": ["Archivo Narrow"],
+                      "label-sm": ["JetBrains Mono"],
+                      "headline-md": ["Bebas Neue"],
+                      "display-xl": ["Bebas Neue"],
+                      "body-md": ["Archivo Narrow"],
+                      "headline-lg-mobile": ["Bebas Neue"]
+              },
+              "fontSize": {
+                      "headline-lg": ["48px", {"lineHeight": "48px", "fontWeight": "700"}],
+                      "body-lg": ["18px", {"lineHeight": "24px", "fontWeight": "700"}],
+                      "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "700"}],
+                      "headline-md": ["24px", {"lineHeight": "28px", "fontWeight": "700"}],
+                      "display-xl": ["72px", {"lineHeight": "72px", "letterSpacing": "0.05em", "fontWeight": "700"}],
+                      "body-md": ["16px", {"lineHeight": "22px", "fontWeight": "600"}],
+                      "headline-lg-mobile": ["32px", {"lineHeight": "32px", "fontWeight": "700"}]
+              }
+            },
+          },
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-background text-on-background min-h-screen font-body-md selection:bg-primary selection:text-on-primary overflow-x-hidden custom-scrollbar">
+<!-- Top AppBar Component -->
+<header class="fixed top-0 w-full z-50 clip-path-[polygon(0%_0%,100%_0%,100%_90%,50%_100%,0%_90%)] bg-surface/80 backdrop-blur-md border-b-2 border-secondary shadow-[0_0_20px_rgba(255,214,91,0.3)] flex justify-between items-center px-margin-mobile md:px-margin-desktop py-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" data-icon="monetization_on">monetization_on</span>
+<h1 class="text-headline-md font-headline-md text-primary drop-shadow-[0_0_10px_rgba(221,183,255,0.8)]">LOOPLOCKERS</h1>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center bg-surface-container px-3 py-1 rounded-lg border border-outline-variant">
+<span class="material-symbols-outlined text-secondary text-sm mr-2" data-icon="stars" style="font-variation-settings: 'FILL' 1;">stars</span>
+<span class="text-label-sm font-label-sm text-on-surface">99,999 CREDITS</span>
+</div>
+<button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-icon="close">close</button>
+</div>
+</header>
+<main class="pt-24 pb-32 px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto">
+<!-- Progress Tracker -->
+<div class="w-full mb-12">
+<div class="flex justify-between items-center relative px-4 md:px-12">
+<!-- Connector Line -->
+<div class="absolute top-1/2 left-0 w-full h-1 bg-surface-container-highest -translate-y-1/2 z-0"></div>
+<div class="absolute top-1/2 left-0 w-1/2 h-1 bg-primary -translate-y-1/2 z-0 shadow-[0_0_10px_rgba(221,183,255,0.5)]"></div>
+<!-- Node 1: Completed -->
+<div class="relative z-10 flex flex-col items-center">
+<div class="w-10 h-10 bg-primary text-on-primary rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(221,183,255,0.6)]">
+<span class="material-symbols-outlined font-bold" data-icon="check">check</span>
+</div>
+<span class="mt-2 text-label-sm font-label-sm text-primary">LOADOUT</span>
+</div>
+<!-- Node 2: Active -->
+<div class="relative z-10 flex flex-col items-center">
+<div class="w-12 h-12 bg-secondary text-on-secondary rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(255,214,91,0.8)] border-4 border-background">
+<span class="material-symbols-outlined font-bold" data-icon="location_searching">location_searching</span>
+</div>
+<span class="mt-2 text-label-sm font-label-sm text-secondary">PICKUP</span>
+</div>
+<!-- Node 3: Pending -->
+<div class="relative z-10 flex flex-col items-center">
+<div class="w-10 h-10 bg-surface-container-highest text-outline rounded-full flex items-center justify-center border-2 border-outline-variant">
+<span class="material-symbols-outlined" data-icon="military_tech">military_tech</span>
+</div>
+<span class="mt-2 text-label-sm font-label-sm text-outline">VICTORY</span>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+<!-- Left Column: Checkout Form -->
+<div class="lg:col-span-8 space-y-6">
+<!-- Section 1: Squad Info -->
+<details class="group bg-surface-container/40 border-l-4 border-primary slant-card overflow-hidden transition-all duration-300" open="">
+<summary class="flex items-center justify-between p-6 cursor-pointer list-none hover:bg-surface-container-high transition-colors">
+<div class="flex items-center gap-4">
+<div class="hex-clip bg-primary text-on-primary w-12 h-10 flex items-center justify-center font-headline-md text-headline-md">
+                                1
+                            </div>
+<h2 class="font-headline-md text-headline-md tracking-wider">SQUAD INFO</h2>
+</div>
+<span class="material-symbols-outlined group-open:rotate-180 transition-transform" data-icon="expand_more">expand_more</span>
+</summary>
+<div class="p-8 space-y-6 bg-surface-container-lowest/50">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="space-y-2">
+<label class="text-label-sm font-label-sm text-outline uppercase">PICKUP NOTES</label>
+<input class="w-full bg-surface-container-high border-b-2 border-primary/30 focus:border-primary px-4 py-3 text-on-surface font-body-lg transition-all rounded-none" placeholder="e.g. BRAVO-SIX" type="text">
+</div>
+<div class="space-y-2">
+<label class="text-label-sm font-label-sm text-outline uppercase">PICKUP NOTES</label>
+<input class="w-full bg-surface-container-high border-b-2 border-primary/30 focus:border-primary px-4 py-3 text-on-surface font-body-lg transition-all rounded-none" placeholder="operator@looplockers.net" type="email">
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-label-sm font-label-sm text-outline uppercase">PICKUP NOTES</label>
+<textarea class="w-full bg-surface-container-high border-b-2 border-primary/30 focus:border-primary px-4 py-3 text-on-surface font-body-lg transition-all rounded-none resize-none" placeholder="Specific drop instructions or zone requirements..." rows="3"></textarea>
+</div>
+</div>
+</details>
+<!-- Section 2: Extraction Window -->
+<details class="group bg-surface-container/40 border-l-4 border-tertiary slant-card overflow-hidden transition-all duration-300" open="">
+<summary class="flex items-center justify-between p-6 cursor-pointer list-none hover:bg-surface-container-high transition-colors">
+<div class="flex items-center gap-4">
+<div class="hex-clip bg-tertiary text-on-tertiary w-12 h-10 flex items-center justify-center font-headline-md text-headline-md">
+                                2
+                            </div>
+<h2 class="font-headline-md text-headline-md tracking-wider">PICKUP WINDOW</h2>
+</div>
+<span class="material-symbols-outlined group-open:rotate-180 transition-transform" data-icon="expand_more">expand_more</span>
+</summary>
+<div class="p-8 space-y-6 bg-surface-container-lowest/50">
+<p class="text-body-md text-on-surface-variant italic">Select your tactical window for loot retrieval. Availability depends on local zone heat.</p>
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"><button class="shard-clip py-3 px-4 bg-surface-container-high border border-outline-variant text-label-sm font-label-sm hover:border-primary transition-all text-center">Morning</button><button class="shard-clip py-3 px-4 bg-surface-container-high border border-outline-variant text-label-sm font-label-sm hover:border-primary transition-all text-center">Before Lunch</button><button class="shard-clip py-3 px-4 bg-secondary/20 border-2 border-secondary text-secondary text-label-sm font-label-sm shadow-[0_0_10px_rgba(255,214,91,0.3)] text-center">Lunchtime</button><button class="shard-clip py-3 px-4 bg-surface-container-high border border-outline-variant text-label-sm font-label-sm hover:border-primary transition-all text-center">After Lunch</button><button class="shard-clip py-3 px-4 bg-surface-container-high border border-outline-variant text-label-sm font-label-sm hover:border-primary transition-all text-center opacity-50 cursor-not-allowed">After School (FULL)</button></div>
+</div>
+</details>
+<!-- Section 3: Payment -->
+<details class="group bg-surface-container/40 border-l-4 border-secondary slant-card overflow-hidden transition-all duration-300" open="">
+<summary class="flex items-center justify-between p-6 cursor-pointer list-none hover:bg-surface-container-high transition-colors">
+<div class="flex items-center gap-4">
+<div class="hex-clip bg-secondary text-on-secondary w-12 h-10 flex items-center justify-center font-headline-md text-headline-md">
+                                3
+                            </div>
+<h2 class="font-headline-md text-headline-md tracking-wider">PAYMENT</h2>
+</div>
+<span class="material-symbols-outlined group-open:rotate-180 transition-transform" data-icon="expand_more">expand_more</span>
+</summary>
+<div class="p-8 space-y-8 bg-surface-container-lowest/50">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6"><label class="cursor-pointer"><input class="hidden peer" name="payment" type="radio" value="cash"><div class="p-6 border-2 border-outline-variant peer-checked:border-secondary peer-checked:bg-secondary/10 transition-all slant-card h-full relative group"><div class="flex items-center justify-between mb-4"><span class="material-symbols-outlined text-3xl text-outline" data-icon="payments">payments</span><div class="w-4 h-4 rounded-full border-2 border-outline-variant peer-checked:border-secondary flex items-center justify-center"><div class="w-2 h-2 bg-secondary rounded-full hidden peer-checked:block"></div></div></div><h3 class="font-headline-md text-headline-md">CASH</h3><p class="text-body-md text-on-surface-variant">Pay at pickup point.</p></div></label><label class="cursor-pointer"><input checked="" class="hidden peer" name="payment" type="radio" value="card"><div class="p-6 border-2 border-outline-variant peer-checked:border-secondary peer-checked:bg-secondary/10 transition-all slant-card h-full relative group"><div class="flex items-center justify-between mb-4"><span class="material-symbols-outlined text-3xl text-secondary" data-icon="credit_card">credit_card</span><div class="w-4 h-4 rounded-full border-2 border-outline-variant peer-checked:border-secondary flex items-center justify-center"><div class="w-2 h-2 bg-secondary rounded-full hidden peer-checked:block"></div></div></div><h3 class="font-headline-md text-headline-md">CARD</h3><p class="text-body-md text-on-surface-variant">Secure Stripe protocol.</p></div></label><label class="cursor-pointer"><input class="hidden peer" name="payment" type="radio" value="apple"><div class="p-6 border-2 border-outline-variant peer-checked:border-secondary peer-checked:bg-secondary/10 transition-all slant-card h-full relative group"><div class="flex items-center justify-between mb-4"><span class="material-symbols-outlined text-3xl text-outline" data-icon="account_balance_wallet">account_balance_wallet</span><div class="w-4 h-4 rounded-full border-2 border-outline-variant peer-checked:border-secondary flex items-center justify-center"><div class="w-2 h-2 bg-secondary rounded-full hidden peer-checked:block"></div></div></div><h3 class="font-headline-md text-headline-md">APPLE PAY</h3><p class="text-body-md text-on-surface-variant">One-tap checkout.</p></div></label><label class="cursor-pointer"><input class="hidden peer" name="payment" type="radio" value="google"><div class="p-6 border-2 border-outline-variant peer-checked:border-secondary peer-checked:bg-secondary/10 transition-all slant-card h-full relative group"><div class="flex items-center justify-between mb-4"><span class="material-symbols-outlined text-3xl text-outline" data-icon="google_plus_rescale">google_plus_rescale</span><div class="w-4 h-4 rounded-full border-2 border-outline-variant peer-checked:border-secondary flex items-center justify-center"><div class="w-2 h-2 bg-secondary rounded-full hidden peer-checked:block"></div></div></div><h3 class="font-headline-md text-headline-md">GOOGLE PAY</h3><p class="text-body-md text-on-surface-variant">Fast and secure.</p></div></label></div>
+<!-- Stripe Reveal Mock -->
+<div class="bg-surface-container-high/50 p-6 rounded border border-outline-variant space-y-4 hidden peer-checked:block"><div class="space-y-4"><label class="text-label-sm font-label-sm text-outline uppercase tracking-wider">Secure Payment Entry</label><div class="space-y-3"><div class="relative"><input type="text" placeholder="Card Number" class="w-full bg-surface border-b-2 border-primary/30 focus:border-primary px-4 py-3 text-on-surface font-body-lg transition-all rounded-none"><span class="absolute right-4 top-1/2 -translate-y-1/2 flex gap-2"><img alt="Visa" class="h-4 opacity-50" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCWKGjJsReBanr2_wDeycMYM6KbxxQOL2dUMjTKc9lV1kX2k9ls-1IpxQc-ltyQzOWHUZWx-TKjON2aaOKxy7QptQmeo-LOkvbYqu2PbA2nZyf8OYInvWl-fZ8i7u9sYCnVIC_FaNUh2rvZS0Ae7dQZ3dcd7jA-I92Z7drvRCkU0SUKYh-i4TNn7GecQNav0XgvDjYtgSEFh9ZFq-CnuYYpZcWz1I6f5Xe-Dm6WH9twHprYRSTBsLXXyw"><img alt="Mastercard" class="h-4 opacity-50" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAkGwffa5CUt9oB13HoIXZzqr2g9lzDRFtvCzpaW520t2Tq0YHQ51MS4WYhfo85TW4IXm5yszkZ-Qmzysq7ulx2h9aQiY7cO9Y--1_GIOqEZpiIwuutjrayhaNC0b0zW1MyJZJTnQ3jZdagp6pJ0neijYxHFTVlkwLtU4AJ9GMx4C5eTWiMRNPuIlb2qS0R-mNWgvcSS2ys9HgGiMC670cdrgDom69_0uCIdAWUuU6JGECxP-h8DHvjrg"></span></div><div class="grid grid-cols-3 gap-3"><div><input type="text" placeholder="MM/YY" class="w-full bg-surface border-b-2 border-primary/30 focus:border-primary px-4 py-3 text-on-surface font-body-lg transition-all rounded-none"></div><div><input type="text" placeholder="CVC" class="w-full bg-surface border-b-2 border-primary/30 focus:border-primary px-4 py-3 text-on-surface font-body-lg transition-all rounded-none"></div><div><input type="text" placeholder="POSTAL" class="w-full bg-surface border-b-2 border-primary/30 focus:border-primary px-4 py-3 text-on-surface font-body-lg transition-all rounded-none"></div></div></div><div class="flex items-center justify-end gap-2 pt-2 opacity-60"><span class="text-[10px] font-label-sm text-outline uppercase">Powered by</span><span class="text-on-surface font-bold text-xs tracking-tighter">stripe</span></div></div></div>
+</div>
+</details>
+</div>
+<!-- Right Column: Order Summary -->
+<aside class="lg:col-span-4 sticky top-24">
+<div class="slant-card bg-surface-container border-2 border-secondary/30 p-6 space-y-6 shadow-xl relative overflow-hidden">
+<div class="absolute top-0 right-0 w-32 h-32 bg-secondary/5 blur-3xl -z-10"></div>
+<h2 class="font-headline-md text-headline-md border-b border-outline-variant pb-4 flex items-center gap-2">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+                        MANIFEST SUMMARY
+                    </h2>
+<div class="space-y-4 max-h-64 overflow-y-auto custom-scrollbar pr-2">
+<!-- Item 1 -->
+<div class="flex items-center gap-3 p-2 bg-surface-container-low border border-outline-variant/20 shard-clip">
+<div class="w-16 h-16 bg-surface-container-highest flex items-center justify-center rounded">
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="backpack">backpack</span>
+</div>
+<div class="flex-1">
+<h4 class="text-label-sm font-label-sm">TITAN-X BACKPACK</h4>
+<span class="text-primary text-xs uppercase font-bold tracking-widest">EPIC RARITY</span>
+</div>
+<span class="text-label-sm font-label-sm">1,200</span>
+</div>
+<!-- Item 2 -->
+<div class="flex items-center gap-3 p-2 bg-surface-container-low border border-outline-variant/20 shard-clip">
+<div class="w-16 h-16 bg-surface-container-highest flex items-center justify-center rounded">
+<span class="material-symbols-outlined text-secondary text-3xl" data-icon="shield">shield</span>
+</div>
+<div class="flex-1">
+<h4 class="text-label-sm font-label-sm">KINETIC SHIELD GEN</h4>
+<span class="text-secondary text-xs uppercase font-bold tracking-widest">LEGENDARY</span>
+</div>
+<span class="text-label-sm font-label-sm">4,500</span>
+</div>
+<!-- Item 3 -->
+<div class="flex items-center gap-3 p-2 bg-surface-container-low border border-outline-variant/20 shard-clip">
+<div class="w-16 h-16 bg-surface-container-highest flex items-center justify-center rounded">
+<span class="material-symbols-outlined text-tertiary text-3xl" data-icon="bolt">bolt</span>
+</div>
+<div class="flex-1">
+<h4 class="text-label-sm font-label-sm">PLASMA CORE x2</h4>
+<span class="text-tertiary text-xs uppercase font-bold tracking-widest">RARE TIER</span>
+</div>
+<span class="text-label-sm font-label-sm">800</span>
+</div>
+</div>
+<div class="space-y-2 pt-4 border-t border-outline-variant">
+<div class="flex justify-between text-body-md text-on-surface-variant">
+<span class="">SUBTOTAL</span>
+<span class="">6,500 CR</span>
+</div>
+<div class="flex justify-between text-body-md text-on-surface-variant">
+<span class="">ZONE TAX (15%)</span>
+<span class="">975 CR</span>
+</div>
+<div class="flex justify-between text-headline-md text-secondary mt-2">
+<span class="">TOTAL COST</span>
+<span class="drop-shadow-[0_0_5px_rgba(255,214,91,0.5)]">7,475 CR</span>
+</div>
+</div>
+<button class="w-full bg-secondary text-on-secondary font-headline-md text-headline-md py-4 button-clip scan-effect relative overflow-hidden group">CONFIRM PICKUP</button>
+<p class="text-[10px] text-center text-outline uppercase tracking-widest font-label-sm">
+                        * NO REFUNDS ONCE THE DROPSHIP LEAVES THE HUB *
+                    </p>
+</div>
+<!-- Ad/Atmospheric Shard -->
+<div class="mt-6 slant-card relative h-32 overflow-hidden bg-surface-container-high border border-primary/20">
+
+<div class="absolute inset-0 p-4 flex flex-col justify-center">
+<span class="text-primary font-label-sm text-[10px] uppercase">Zone Status</span>
+<h4 class="font-headline-md text-headline-md leading-none">SECTOR 7-B: LOW HEAT</h4>
+<div class="flex gap-1 mt-2">
+<div class="h-1 w-12 bg-primary"></div>
+<div class="h-1 w-12 bg-primary"></div>
+<div class="h-1 w-12 bg-surface-container-highest"></div>
+<div class="h-1 w-12 bg-surface-container-highest"></div>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</main>
+<!-- Bottom Navigation Bar Component -->
+<nav class="fixed bottom-0 w-full z-50 h-20 clip-path-[polygon(5%_0%,95%_0%,100%_100%,0%_100%)] bg-gradient-to-t from-surface-container-highest to-surface-container shadow-[0_-10px_30px_rgba(167,200,255,0.2)] flex justify-around items-end w-full px-4 pb-2">
+<a class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="location_searching">location_searching</span>
+<span class="text-label-sm font-label-sm">Drop Zone</span>
+</a>
+<a class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+<span class="text-label-sm font-label-sm">The Locker</span>
+</a>
+<a class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="text-label-sm font-label-sm">Mission</span>
+</a>
+<a class="flex flex-col items-center justify-center text-secondary-container bg-secondary/10 rounded-xl px-6 py-2 border-t-4 border-secondary shadow-[0_0_15px_rgba(255,214,91,0.5)] translate-y-[-2px]" href="#">
+<span class="material-symbols-outlined" data-icon="shopping_bag">shopping_bag</span>
+<span class="text-label-sm font-label-sm">Loadout</span>
+</a>
+</nav>
+<script>
+        // Micro-interactions
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('mousedown', () => {
+                btn.style.transform = 'scale(0.95)';
+            });
+            btn.addEventListener('mouseup', () => {
+                btn.style.transform = 'scale(1)';
+            });
+        });
+
+        // Toggle Time Slots
+        const timeChips = document.querySelectorAll('.shard-clip.bg-surface-container-high');
+        timeChips.forEach(chip => {
+            chip.addEventListener('click', () => {
+                timeChips.forEach(c => {
+                    c.classList.remove('bg-secondary/20', 'border-secondary', 'text-secondary', 'shadow-[0_0_10px_rgba(255,214,91,0.3)]');
+                    c.classList.add('bg-surface-container-high', 'border-outline-variant');
+                });
+                chip.classList.add('bg-secondary/20', 'border-secondary', 'text-secondary', 'shadow-[0_0_10px_rgba(255,214,91,0.3)]');
+                chip.classList.remove('bg-surface-container-high', 'border-outline-variant');
+            });
+        });
+    </script>
+
+
+
+
+</body></html>

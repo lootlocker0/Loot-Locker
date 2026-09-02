@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>LOOPLOCKERS | VICTORY ROYALE</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Archivo+Narrow:wght@400;600;700&amp;family=JetBrains+Mono:wght@700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Archivo+Narrow:wght@400;600;700&family=JetBrains+Mono:wght@700&display=swap');
+
+        :root {
+            --primary: #ddb7ff;
+            --secondary: #ffd65b;
+            --surface: #13131b;
+        }
+
+        body {
+            background-color: #07070F;
+            color: #e4e1ee;
+            overflow: hidden;
+            font-family: 'Archivo Narrow', sans-serif;
+        }
+
+        .victory-outline {
+            -webkit-text-stroke: 2px #ffd65b;
+            color: transparent;
+            text-shadow: 0 0 20px rgba(255, 214, 91, 0.4);
+        }
+
+        .shard-clip {
+            clip-path: polygon(5% 0%, 100% 0%, 95% 100%, 0% 100%);
+        }
+
+        .button-clip {
+            clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+        }
+
+        .card-clip {
+            clip-path: polygon(0 0, 92% 0, 100% 8%, 100% 100%, 8% 100%, 0 92%);
+        }
+
+        .scan-line {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background: #ffd65b;
+            box-shadow: 0 0 15px #ffd65b;
+            animation: scan 2s linear infinite;
+        }
+
+        @keyframes scan {
+            0% { top: 0; }
+            100% { top: 100%; }
+        }
+
+        .confetti {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: #ffd65b;
+            animation: fall linear infinite;
+        }
+
+        @keyframes fall {
+            to { transform: translateY(100vh) rotate(720deg); }
+        }
+
+        .glimmer {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(45deg, transparent 25%, rgba(255,255,255,0.1) 50%, transparent 75%);
+            background-size: 200% 200%;
+            animation: glimmer-move 3s linear infinite;
+            pointer-events: none;
+        }
+
+        @keyframes glimmer-move {
+            0% { background-position: -200% -200%; }
+            100% { background-position: 200% 200%; }
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface flex items-center justify-center min-h-screen relative">
+<!-- Confetti Container -->
+<div class="absolute inset-0 pointer-events-none z-0" id="confetti-layer"></div>
+<!-- Main Content Canvas -->
+<main class="relative z-10 w-full max-w-2xl px-margin-mobile md:px-margin-desktop flex flex-col items-center">
+<!-- Victory Badge -->
+<div class="relative mb-6 animate-bounce">
+<div class="absolute inset-0 bg-secondary blur-2xl opacity-20 rounded-full"></div>
+<div class="relative flex items-center justify-center w-32 h-32 md:w-48 md:h-48 border-4 border-secondary rounded-full shadow-[0_0_30px_rgba(255,214,91,0.5)] bg-surface-container">
+<span class="material-symbols-outlined text-[64px] md:text-[96px] text-secondary" style="font-variation-settings: 'FILL' 1;">
+                    workspace_premium
+                </span>
+<div class="absolute bottom-0 bg-secondary text-on-secondary font-label-sm text-label-sm px-4 py-1 shard-clip">
+                    RANK #1
+                </div>
+</div>
+</div>
+<!-- Headlines -->
+<h1 class="font-display-xl text-display-xl victory-outline tracking-widest text-center mb-2">
+            VICTORY ROYALE
+        </h1>
+<p class="font-body-lg text-body-lg text-primary uppercase tracking-[0.2em] mb-8 drop-shadow-[0_0_8px_rgba(221,183,255,0.6)]">
+            Your snacks are secured.
+        </p>
+<!-- Match ID Chip -->
+<div class="bg-surface-container-highest border border-outline-variant px-6 py-2 shard-clip mb-8 flex items-center gap-3">
+<span class="font-label-sm text-label-sm text-outline uppercase">Match ID:</span>
+<span class="font-label-sm text-label-sm text-secondary tracking-widest">#LL-8829-QX</span>
+</div>
+<!-- Summary Card -->
+<div class="w-full bg-surface-container/60 backdrop-blur-xl border-2 border-secondary/30 p-1 card-clip mb-10 relative group">
+<div class="bg-surface-container-low p-6 md:p-8 card-clip flex flex-col md:flex-row gap-8 items-center">
+<!-- Pickup Info -->
+<div class="flex-1 text-center md:text-left">
+<div class="flex items-center justify-center md:justify-start gap-2 mb-4">
+<span class="material-symbols-outlined text-secondary">inventory_2</span>
+<h3 class="font-headline-md text-headline-md text-on-surface">DROP POINT ALPHA</h3>
+</div>
+<div class="grid grid-cols-2 gap-4 mb-6">
+<div class="bg-surface-container-high p-4 border-l-4 border-secondary">
+<p class="font-label-sm text-label-sm text-outline uppercase mb-1">Bay Number</p>
+<p class="font-headline-lg text-headline-lg text-secondary">A-14</p>
+</div>
+<div class="bg-surface-container-high p-4 border-l-4 border-primary">
+<p class="font-label-sm text-label-sm text-outline uppercase mb-1">Status</p>
+<p class="font-headline-lg text-headline-lg text-primary">LOCKED</p>
+</div>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant italic">
+                        "Your gear is waiting in the high-security bay. Head to the sector now."
+                    </p>
+</div>
+<!-- QR Scanner Area -->
+<div class="w-48 h-48 bg-white p-3 rounded-lg relative overflow-hidden shadow-[0_0_40px_rgba(255,255,255,0.1)]">
+<div class="scan-line"></div>
+<img class="w-full h-full object-contain mix-blend-multiply opacity-90" data-alt="A clean, minimalist high-contrast QR code generated in vector style, placed on a futuristic glowing white interface background. The visual should feel like a high-tech tactical security scan from a modern battle royale video game HUD, emphasizing clean lines and digital precision." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD66m-nmdwc4YeuwmnPzAZpa192880xRZZDHGfwuoCFKEjSEhpkSBZs3ujpo8cOv5xugCRjEP5xf4AOAf-X_8iINtZ0jkkI_sapHAnLQ9qgwxkLHQgASkpuH9kREH1-_C0uajvbRBABnJ-0H-Z4TuWB1LjMgRN-wCJqiMtpKmFXCtobgXa3E_eBOZ-JnbgCjtHXkQkkMTFW5hNhJfsLdTB5v55v6WaAhYJpHCTxI-C2potvJfjbwel05A"/>
+<div class="absolute inset-0 border-4 border-secondary/50 pointer-events-none"></div>
+</div>
+</div>
+<!-- Floating Text Label -->
+<div class="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-secondary text-on-secondary px-4 py-1 font-label-sm text-label-sm whitespace-nowrap shard-clip">
+                SCAN AT DROP POINT
+            </div>
+</div>
+<!-- Actions -->
+<div class="w-full flex flex-col md:flex-row gap-4 mb-20">
+<button class="flex-1 bg-secondary hover:bg-secondary-container text-on-secondary font-headline-md text-headline-md py-4 button-clip transition-all duration-300 transform hover:scale-105 hover:shadow-[0_0_25px_rgba(255,214,91,0.6)] flex items-center justify-center gap-2 relative overflow-hidden">
+<div class="glimmer"></div>
+<span class="material-symbols-outlined">home</span>
+                BACK TO THE LOCKER
+            </button>
+<button class="flex-1 border-2 border-outline-variant hover:border-primary text-on-surface font-headline-md text-headline-md py-4 button-clip transition-all duration-300 transform hover:scale-105 flex items-center justify-center gap-2 group">
+<span class="material-symbols-outlined group-hover:text-primary">mail</span>
+                EMAIL RECEIPT
+            </button>
+</div>
+</main>
+<!-- Bottom Nav (Suppressed for Victory Screen per Contextual FAB Suppression Rules, but provided via Logic as a 'back' mechanism) -->
+<!-- We keep it hidden on this screen to prioritize the focus on the victory state -->
+<script>
+        // Particle/Confetti Effect
+        const container = document.getElementById('confetti-layer');
+        const colors = ['#ffd65b', '#ddb7ff', '#a7c8ff', '#ffffff'];
+
+        function createConfetti() {
+            const confetti = document.createElement('div');
+            confetti.classList.add('confetti');
+            
+            // Random properties
+            const size = Math.random() * 8 + 4;
+            const left = Math.random() * 100;
+            const duration = Math.random() * 3 + 2;
+            const delay = Math.random() * 5;
+            const color = colors[Math.floor(Math.random() * colors.length)];
+
+            confetti.style.width = `${size}px`;
+            confetti.style.height = `${size}px`;
+            confetti.style.left = `${left}vw`;
+            confetti.style.top = `-20px`;
+            confetti.style.backgroundColor = color;
+            confetti.style.animationDuration = `${duration}s`;
+            confetti.style.animationDelay = `${delay}s`;
+            confetti.style.opacity = Math.random();
+            confetti.style.clipPath = Math.random() > 0.5 ? 'polygon(50% 0%, 0% 100%, 100% 100%)' : 'none';
+
+            container.appendChild(confetti);
+
+            // Cleanup
+            setTimeout(() => {
+                confetti.remove();
+            }, (duration + delay) * 1000);
+        }
+
+        // Initialize confetti
+        for(let i = 0; i < 50; i++) {
+            createConfetti();
+        }
+
+        // Keep producing
+        setInterval(createConfetti, 150);
+
+        // Micro-interactions
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('mousedown', () => {
+                btn.classList.add('scale-95');
+            });
+            btn.addEventListener('mouseup', () => {
+                btn.classList.remove('scale-95');
+            });
+        });
+    </script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-secondary": "#3d2f00",
+                      "outline": "#988d9f",
+                      "surface-container-high": "#292932",
+                      "on-primary-fixed-variant": "#6900b3",
+                      "on-tertiary-container": "#002a55",
+                      "on-secondary-fixed": "#241a00",
+                      "inverse-surface": "#e4e1ee",
+                      "surface-container-low": "#1b1b24",
+                      "secondary": "#ffd65b",
+                      "secondary-container": "#e7b900",
+                      "inverse-primary": "#842bd2",
+                      "on-tertiary": "#003061",
+                      "surface-tint": "#ddb7ff",
+                      "surface-bright": "#393842",
+                      "surface": "#13131b",
+                      "surface-container-lowest": "#0d0d16",
+                      "primary": "#ddb7ff",
+                      "on-secondary-container": "#5f4a00",
+                      "secondary-fixed": "#ffe08b",
+                      "inverse-on-surface": "#302f39",
+                      "error-container": "#93000a",
+                      "tertiary-container": "#3a91fb",
+                      "surface-container-highest": "#34343e",
+                      "surface-container": "#1f1f28",
+                      "primary-fixed-dim": "#ddb7ff",
+                      "surface-variant": "#34343e",
+                      "on-primary": "#490080",
+                      "on-background": "#e4e1ee",
+                      "on-tertiary-fixed": "#001b3c",
+                      "tertiary-fixed": "#d5e3ff",
+                      "on-error": "#690005",
+                      "primary-container": "#b76dff",
+                      "background": "#13131b",
+                      "on-secondary-fixed-variant": "#584400",
+                      "on-surface": "#e4e1ee",
+                      "outline-variant": "#4d4354",
+                      "on-primary-container": "#400071",
+                      "tertiary-fixed-dim": "#a7c8ff",
+                      "on-surface-variant": "#cfc2d6",
+                      "on-tertiary-fixed-variant": "#004689",
+                      "on-primary-fixed": "#2c0051",
+                      "tertiary": "#a7c8ff",
+                      "secondary-fixed-dim": "#f0c110",
+                      "surface-dim": "#13131b",
+                      "error": "#ffb4ab",
+                      "on-error-container": "#ffdad6",
+                      "primary-fixed": "#f0dbff"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "margin-mobile": "16px",
+                      "unit": "4px",
+                      "margin-desktop": "32px",
+                      "shard-angle": "15deg",
+                      "gutter": "16px"
+              },
+              "fontFamily": {
+                      "headline-lg": ["Bebas Neue"],
+                      "body-lg": ["Archivo Narrow"],
+                      "label-sm": ["JetBrains Mono"],
+                      "headline-md": ["Bebas Neue"],
+                      "display-xl": ["Bebas Neue"],
+                      "body-md": ["Archivo Narrow"],
+                      "headline-lg-mobile": ["Bebas Neue"]
+              },
+              "fontSize": {
+                      "headline-lg": ["48px", {"lineHeight": "48px", "fontWeight": "700"}],
+                      "body-lg": ["18px", {"lineHeight": "24px", "fontWeight": "700"}],
+                      "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "700"}],
+                      "headline-md": ["24px", {"lineHeight": "28px", "fontWeight": "700"}],
+                      "display-xl": ["72px", {"lineHeight": "72px", "letterSpacing": "0.05em", "fontWeight": "700"}],
+                      "body-md": ["16px", {"lineHeight": "22px", "fontWeight": "600"}],
+                      "headline-lg-mobile": ["32px", {"lineHeight": "32px", "fontWeight": "700"}]
+              }
+            },
+          },
+        }
+    </script>
+</body></html>

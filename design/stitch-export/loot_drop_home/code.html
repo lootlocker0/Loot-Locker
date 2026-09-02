@@ -1,0 +1,418 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>LOOPLOCKERS | BIG BACK SNACKS</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Archivo+Narrow:wght@400;600;700&amp;family=JetBrains+Mono:wght@700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        
+        .shard-bg {
+            clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+        }
+
+        .hexagon-frame {
+            clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+        }
+
+        .hero-outline-text {
+            -webkit-text-stroke: 2px #ddb7ff;
+            color: transparent;
+            text-shadow: 0 0 20px rgba(221, 183, 255, 0.4);
+        }
+
+        .glow-epic { box-shadow: 0 0 25px rgba(183, 109, 255, 0.6); border: 2px solid #b76dff; }
+        .glow-legendary { box-shadow: 0 0 25px rgba(255, 214, 91, 0.6); border: 2px solid #ffd65b; }
+        .glow-rare { box-shadow: 0 0 25px rgba(167, 200, 255, 0.6); border: 2px solid #a7c8ff; }
+
+        @keyframes scan-line {
+            0% { transform: translateX(-100%) skewX(-15deg); }
+            100% { transform: translateX(200%) skewX(-15deg); }
+        }
+
+        .btn-scan:hover::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 40%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            animation: scan-line 0.8s ease-in-out infinite;
+        }
+
+        .particle {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: #a7c8ff;
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+            animation: float-particle 10s linear infinite;
+        }
+
+        @keyframes float-particle {
+            0% { transform: translateY(0) translateX(0); opacity: 0; }
+            10% { opacity: 0.8; }
+            90% { opacity: 0.8; }
+            100% { transform: translateY(-100vh) translateX(50px); opacity: 0; }
+        }
+
+        .shard-overlay {
+            position: absolute;
+            background: linear-gradient(135deg, rgba(167, 200, 255, 0.05) 0%, transparent 70%);
+            clip-path: polygon(0 20%, 100% 0, 80% 100%, 20% 80%);
+            z-index: 1;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-secondary": "#3d2f00",
+                      "outline": "#988d9f",
+                      "surface-container-high": "#292932",
+                      "on-primary-fixed-variant": "#6900b3",
+                      "on-tertiary-container": "#002a55",
+                      "on-secondary-fixed": "#241a00",
+                      "inverse-surface": "#e4e1ee",
+                      "surface-container-low": "#1b1b24",
+                      "secondary": "#ffd65b",
+                      "secondary-container": "#e7b900",
+                      "inverse-primary": "#842bd2",
+                      "on-tertiary": "#003061",
+                      "surface-tint": "#ddb7ff",
+                      "surface-bright": "#393842",
+                      "surface": "#13131b",
+                      "surface-container-lowest": "#0d0d16",
+                      "primary": "#ddb7ff",
+                      "on-secondary-container": "#5f4a00",
+                      "secondary-fixed": "#ffe08b",
+                      "inverse-on-surface": "#302f39",
+                      "error-container": "#93000a",
+                      "tertiary-container": "#3a91fb",
+                      "surface-container-highest": "#34343e",
+                      "surface-container": "#1f1f28",
+                      "primary-fixed-dim": "#ddb7ff",
+                      "surface-variant": "#34343e",
+                      "on-primary": "#490080",
+                      "on-background": "#e4e1ee",
+                      "on-tertiary-fixed": "#001b3c",
+                      "tertiary-fixed": "#d5e3ff",
+                      "on-error": "#690005",
+                      "primary-container": "#b76dff",
+                      "background": "#13131b",
+                      "on-secondary-fixed-variant": "#584400",
+                      "on-surface": "#e4e1ee",
+                      "outline-variant": "#4d4354",
+                      "on-primary-container": "#400071",
+                      "tertiary-fixed-dim": "#a7c8ff",
+                      "on-surface-variant": "#cfc2d6",
+                      "on-tertiary-fixed-variant": "#004689",
+                      "on-primary-fixed": "#2c0051",
+                      "tertiary": "#a7c8ff",
+                      "secondary-fixed-dim": "#f0c110",
+                      "surface-dim": "#13131b",
+                      "error": "#ffb4ab",
+                      "on-error-container": "#ffdad6",
+                      "primary-fixed": "#f0dbff"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "margin-mobile": "16px",
+                      "unit": "4px",
+                      "margin-desktop": "32px",
+                      "shard-angle": "15deg",
+                      "gutter": "16px"
+              },
+              "fontFamily": {
+                      "headline-lg": ["Bebas Neue"],
+                      "body-lg": ["Archivo Narrow"],
+                      "label-sm": ["JetBrains Mono"],
+                      "headline-md": ["Bebas Neue"],
+                      "display-xl": ["Bebas Neue"],
+                      "body-md": ["Archivo Narrow"],
+                      "headline-lg-mobile": ["Bebas Neue"]
+              },
+              "fontSize": {
+                      "headline-lg": ["48px", {"lineHeight": "48px", "fontWeight": "700"}],
+                      "body-lg": ["18px", {"lineHeight": "24px", "fontWeight": "700"}],
+                      "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "700"}],
+                      "headline-md": ["24px", {"lineHeight": "28px", "fontWeight": "700"}],
+                      "display-xl": ["72px", {"lineHeight": "72px", "letterSpacing": "0.05em", "fontWeight": "700"}],
+                      "body-md": ["16px", {"lineHeight": "22px", "fontWeight": "600"}],
+                      "headline-lg-mobile": ["32px", {"lineHeight": "32px", "fontWeight": "700"}]
+              }
+            },
+          },
+        }
+      </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background overflow-x-hidden font-body-md text-body-md min-h-screen">
+<!-- Atmospheric Particles -->
+<div class="fixed inset-0 pointer-events-none z-0" id="particle-container"><div class="particle" style="width: 2.06199px; height: 2.06199px; left: 70.8738vw; top: 72.705vh; animation-delay: 7.99835s; animation-duration: 18.0371s;"></div><div class="particle" style="width: 2.53406px; height: 2.53406px; left: 1.65154vw; top: 78.9464vh; animation-delay: 6.47638s; animation-duration: 17.9495s;"></div><div class="particle" style="width: 2.69777px; height: 2.69777px; left: 66.3505vw; top: 42.6101vh; animation-delay: 5.94966s; animation-duration: 18.8497s;"></div><div class="particle" style="width: 1.88298px; height: 1.88298px; left: 34.76vw; top: 12.4863vh; animation-delay: 9.61922s; animation-duration: 14.0777s;"></div><div class="particle" style="width: 2.38579px; height: 2.38579px; left: 94.8149vw; top: 89.4894vh; animation-delay: 1.46427s; animation-duration: 17.1985s;"></div><div class="particle" style="width: 2.65134px; height: 2.65134px; left: 98.9937vw; top: 75.9002vh; animation-delay: 5.65217s; animation-duration: 10.7809s;"></div><div class="particle" style="width: 1.03919px; height: 1.03919px; left: 94.5884vw; top: 53.0715vh; animation-delay: 4.3444s; animation-duration: 13.5788s;"></div><div class="particle" style="width: 2.26982px; height: 2.26982px; left: 48.401vw; top: 98.7475vh; animation-delay: 1.58277s; animation-duration: 18.6002s;"></div><div class="particle" style="width: 2.20131px; height: 2.20131px; left: 63.945vw; top: 95.2083vh; animation-delay: 8.31218s; animation-duration: 13.8188s;"></div><div class="particle" style="width: 2.00581px; height: 2.00581px; left: 28.4066vw; top: 74.862vh; animation-delay: 6.91687s; animation-duration: 16.9228s;"></div><div class="particle" style="width: 1.61481px; height: 1.61481px; left: 10.787vw; top: 19.7454vh; animation-delay: 0.0587472s; animation-duration: 19.9146s;"></div><div class="particle" style="width: 1.17517px; height: 1.17517px; left: 33.6207vw; top: 41.8878vh; animation-delay: 2.96185s; animation-duration: 10.6119s;"></div><div class="particle" style="width: 1.22413px; height: 1.22413px; left: 43.4785vw; top: 41.7257vh; animation-delay: 8.89048s; animation-duration: 18.0372s;"></div><div class="particle" style="width: 2.74936px; height: 2.74936px; left: 4.46324vw; top: 73.3628vh; animation-delay: 3.55742s; animation-duration: 11.2478s;"></div><div class="particle" style="width: 1.16487px; height: 1.16487px; left: 44.3582vw; top: 85.5683vh; animation-delay: 4.03245s; animation-duration: 16.279s;"></div><div class="particle" style="width: 2.74513px; height: 2.74513px; left: 34.8134vw; top: 67.8054vh; animation-delay: 4.43177s; animation-duration: 17.8971s;"></div><div class="particle" style="width: 1.04141px; height: 1.04141px; left: 75.3598vw; top: 91.3832vh; animation-delay: 6.95712s; animation-duration: 15.5278s;"></div><div class="particle" style="width: 2.34379px; height: 2.34379px; left: 5.73182vw; top: 14.6273vh; animation-delay: 6.11798s; animation-duration: 15.392s;"></div><div class="particle" style="width: 2.85009px; height: 2.85009px; left: 49.4992vw; top: 14.8519vh; animation-delay: 9.62075s; animation-duration: 12.0154s;"></div><div class="particle" style="width: 2.22122px; height: 2.22122px; left: 17.8075vw; top: 55.4896vh; animation-delay: 8.73991s; animation-duration: 11.935s;"></div><div class="particle" style="width: 1.2107px; height: 1.2107px; left: 82.9962vw; top: 74.6699vh; animation-delay: 1.52843s; animation-duration: 18.5669s;"></div><div class="particle" style="width: 1.20337px; height: 1.20337px; left: 29.5887vw; top: 71.6202vh; animation-delay: 4.25132s; animation-duration: 18.9546s;"></div><div class="particle" style="width: 2.69987px; height: 2.69987px; left: 22.9299vw; top: 17.1068vh; animation-delay: 2.81893s; animation-duration: 18.3911s;"></div><div class="particle" style="width: 1.99429px; height: 1.99429px; left: 14.1722vw; top: 50.7052vh; animation-delay: 9.33346s; animation-duration: 14.6002s;"></div><div class="particle" style="width: 2.52515px; height: 2.52515px; left: 4.07252vw; top: 23.1221vh; animation-delay: 1.79538s; animation-duration: 14.6994s;"></div><div class="particle" style="width: 2.7348px; height: 2.7348px; left: 3.66855vw; top: 59.1866vh; animation-delay: 1.70999s; animation-duration: 13.444s;"></div><div class="particle" style="width: 2.29524px; height: 2.29524px; left: 49.4603vw; top: 22.9262vh; animation-delay: 1.34666s; animation-duration: 13.0941s;"></div><div class="particle" style="width: 1.1145px; height: 1.1145px; left: 33.1511vw; top: 58.3865vh; animation-delay: 2.08784s; animation-duration: 11.8273s;"></div><div class="particle" style="width: 2.03491px; height: 2.03491px; left: 4.79374vw; top: 96.4962vh; animation-delay: 6.20418s; animation-duration: 18.1271s;"></div><div class="particle" style="width: 2.45701px; height: 2.45701px; left: 88.2992vw; top: 35.5241vh; animation-delay: 0.459454s; animation-duration: 17.3254s;"></div><div class="particle" style="width: 2.75697px; height: 2.75697px; left: 59.9829vw; top: 93.8018vh; animation-delay: 3.47136s; animation-duration: 12.7734s;"></div><div class="particle" style="width: 2.18591px; height: 2.18591px; left: 90.5973vw; top: 97.2885vh; animation-delay: 9.49768s; animation-duration: 12.4802s;"></div><div class="particle" style="width: 1.38019px; height: 1.38019px; left: 32.8477vw; top: 93.5624vh; animation-delay: 1.89729s; animation-duration: 11.0007s;"></div><div class="particle" style="width: 2.57622px; height: 2.57622px; left: 91.0865vw; top: 82.9398vh; animation-delay: 1.20385s; animation-duration: 14.9281s;"></div><div class="particle" style="width: 2.3664px; height: 2.3664px; left: 83.2512vw; top: 91.1816vh; animation-delay: 5.20153s; animation-duration: 13.7275s;"></div><div class="particle" style="width: 2.25472px; height: 2.25472px; left: 49.081vw; top: 18.9295vh; animation-delay: 7.02075s; animation-duration: 12.4702s;"></div><div class="particle" style="width: 1.04827px; height: 1.04827px; left: 70.4581vw; top: 31.7379vh; animation-delay: 6.27919s; animation-duration: 15.9306s;"></div><div class="particle" style="width: 1.17144px; height: 1.17144px; left: 4.17416vw; top: 64.7928vh; animation-delay: 7.96849s; animation-duration: 12.5063s;"></div><div class="particle" style="width: 2.67773px; height: 2.67773px; left: 55.0829vw; top: 68.8938vh; animation-delay: 3.6956s; animation-duration: 13.699s;"></div><div class="particle" style="width: 1.25161px; height: 1.25161px; left: 1.36807vw; top: 60.9807vh; animation-delay: 2.19514s; animation-duration: 17.5001s;"></div></div>
+<!-- Background Shards -->
+<div class="fixed inset-0 pointer-events-none overflow-hidden z-[-1]">
+<div class="shard-overlay top-[-10%] left-[-5%] w-[60%] h-[80%] opacity-20 rotate-[15deg]"></div>
+<div class="shard-overlay bottom-[-20%] right-[-10%] w-[70%] h-[90%] opacity-10 rotate-[-10deg] scale-x-[-1]"></div>
+</div>
+<!-- Top Navigation -->
+<header class="fixed top-0 w-full z-50 bg-surface/80 backdrop-blur-md text-primary border-b-2 border-secondary shadow-[0_0_20px_rgba(255,214,91,0.3)] clip-path-[polygon(0%_0%,100%_0%,100%_90%,50%_100%,0%_90%)]">
+<div class="flex justify-between items-center px-margin-mobile md:px-margin-desktop py-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" data-icon="monetization_on">monetization_on</span>
+<h1 class="text-headline-md font-headline-md text-primary drop-shadow-[0_0_10px_rgba(221,183,255,0.8)] tracking-wider">LOOPLOCKERS</h1>
+</div>
+<div class="flex items-center gap-4">
+<div class="hidden md:flex gap-6 items-center mr-8">
+<a class="text-secondary transition-colors duration-300 font-label-sm text-label-sm" href="#">DROP ZONE</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors duration-300 font-label-sm text-label-sm" href="#">THE LOCKER</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors duration-300 font-label-sm text-label-sm" href="#">MISSION</a>
+</div>
+<div class="bg-surface-container px-3 py-1 rounded-full flex items-center gap-2 border border-outline-variant">
+<span class="material-symbols-outlined text-secondary scale-75" data-icon="stars" style="font-variation-settings: 'FILL' 1;">stars</span>
+<span class="font-label-sm text-label-sm">99,999</span>
+</div>
+</div>
+</div>
+</header>
+<main class="pt-32 pb-24 px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto relative z-10">
+<!-- Hero Section -->
+<section class="flex flex-col items-center text-center mb-16 md:mb-24">
+<div class="relative inline-block mb-4">
+<h2 class="font-display-xl text-display-xl md:text-[120px] hero-outline-text uppercase tracking-tighter leading-none">
+                    BIG BACK SNACKS
+                </h2>
+<div class="absolute -top-6 -right-6 md:-right-12 bg-primary text-on-primary px-4 py-1 font-label-sm text-label-sm rotate-12 shard-bg">
+                    SEASON 01
+                </div>
+</div>
+<p class="font-headline-md text-headline-md text-on-surface-variant max-w-lg mx-auto mb-10 opacity-90">
+                Loot up before class. The rarest munchies in the academy, drop-delivered to your locker.
+            </p>
+<button class="relative group btn-scan px-12 py-6 bg-secondary text-on-secondary font-headline-md text-headline-md shard-bg overflow-hidden transition-transform active:scale-95 shadow-[0_10px_40px_rgba(255,214,91,0.4)]">
+<span class="relative z-10 flex items-center gap-3">
+                    ENTER THE LOCKER
+                    <span class="material-symbols-outlined" data-icon="bolt" style="font-variation-settings: 'FILL' 1;">bolt</span>
+</span>
+</button>
+</section>
+<!-- Featured Strip -->
+<section class="mb-20">
+<div class="flex flex-col md:flex-row justify-between items-end mb-8 gap-4">
+<div class="flex items-center gap-4">
+<h3 class="font-headline-lg text-headline-lg md:text-headline-lg text-primary tracking-wide">TODAY'S DROP</h3>
+<div class="bg-surface-container-high border-2 border-primary/30 px-3 py-1 font-label-sm text-label-sm text-primary flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] animate-pulse" data-icon="timer">timer</span>
+                        DROP RESETS IN <span id="countdown" class="">04:15:06</span>
+</div>
+</div>
+<button class="text-primary font-label-sm text-label-sm flex items-center gap-2 group">
+                    VIEW ALL ITEMS <span class="material-symbols-outlined group-hover:translate-x-1 transition-transform" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+<!-- Card 1: Epic -->
+<div class="relative group bg-surface-container-low p-4 glow-epic overflow-hidden transition-all duration-300 hover:translate-y-[-4px]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-primary-container clip-path-[polygon(100%_0,0_0,100%_100%)] flex justify-end items-start p-1">
+<span class="font-label-sm text-[10px] text-on-primary-container">LVL 8</span>
+</div>
+<div class="w-full aspect-square bg-gradient-to-br from-surface-container-highest to-surface-container mb-4 overflow-hidden">
+<img class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" data-alt="A macro professional food photograph of a premium bag of purple-dusted spicy chips with futuristic glowing packaging, resting on a dark metallic surface with cyan laser lights in the background. High-stakes battle royale loot aesthetic with cinematic purple backlighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCWUECzZbVVVxm6MOAjUhomq2hjdQlhfWZeaWbi2faKjSw3CfZon-42sTXLQA_muyHDpMmuEtjHjTTDvZqWMWQRj3ZyOYlneJk-lxZdpjmsY-vNdBdFatUYdqQJO5soA6HrPfg4WFIVBWUpYKCZd_UMnG8V0FP7IHiFhzqSx0-ftBH6-X8lkQbMEHBFbsZyRgYNP1qFEvESp9pUwIJF0_Hk4-X0vT07bLi2joCeiaLLqvqbN5-E1RdV5g">
+</div>
+<div class="flex justify-between items-start mb-1">
+<h4 class="font-headline-md text-headline-md">Doritos Nacho Cheese</h4>
+<span class="bg-primary-container text-on-primary-container px-2 py-0.5 text-[10px] font-label-sm">EPIC</span>
+</div>
+<p class="text-on-surface-variant font-label-sm text-[12px] mb-4">+50 Focus / 30m</p>
+<div class="flex justify-between items-center">
+<span class="font-headline-md text-primary">250 CR</span>
+<button class="bg-on-surface/10 hover:bg-on-surface/20 p-2 transition-colors">
+<span class="material-symbols-outlined" data-icon="add_shopping_cart">add_shopping_cart</span>
+</button>
+</div>
+</div>
+<!-- Card 2: Legendary -->
+<div class="relative group bg-surface-container-low p-4 glow-legendary overflow-hidden transition-all duration-300 hover:translate-y-[-4px]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-secondary flex justify-end items-start p-1 clip-path-[polygon(100%_0,0_0,100%_100%)]">
+<span class="font-label-sm text-[10px] text-on-secondary">MAX</span>
+</div>
+<div class="w-full aspect-square bg-gradient-to-br from-surface-container-highest to-surface-container mb-4 overflow-hidden">
+<img class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" data-alt="A sleek gold-plated energy drink bottle with blue electricity crackling around its base, sitting on a tactical armored pedestal. Hyper-realistic render, 8k resolution, cinematic lighting with gold and cyan contrast, gaming HUD aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDYNjpDhWkKzPcGO79BpzYAg24PEbdKO2du8q4Zel0N0iKMs-oPoy8-oiFOJx67wD8xn-i4t_hi6003SCJ_YI_k2fO7Pk3MmPn7iyMt0WaXJINWK59CROg0NrRkN9MQsV5UXahKKjfkdhtUvPSwFAqRRR3sKU_-wkfPQWyWrRXPwlqzW29S_2I66GN6a6tG_-PwTzkvwN4ezkFUjWuHNcMxd-AkQPLWVZ6PivnxVzIG9hJbNmdggRxbIQ">
+</div>
+<div class="flex justify-between items-start mb-1">
+<h4 class="font-headline-md text-headline-md">Gatorade Glacier Freeze</h4>
+<span class="bg-secondary text-on-secondary px-2 py-0.5 text-[10px] font-label-sm">LEGENDARY</span>
+</div>
+<p class="text-on-surface-variant font-label-sm text-[12px] mb-4">+100 Energy / Inst.</p>
+<div class="flex justify-between items-center">
+<span class="font-headline-md text-secondary">1,200 CR</span>
+<button class="bg-on-surface/10 hover:bg-on-surface/20 p-2 transition-colors">
+<span class="material-symbols-outlined" data-icon="add_shopping_cart">add_shopping_cart</span>
+</button>
+</div>
+</div>
+<!-- Card 3: Rare -->
+<div class="relative group bg-surface-container-low p-4 glow-rare overflow-hidden transition-all duration-300 hover:translate-y-[-4px]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-tertiary flex justify-end items-start p-1 clip-path-[polygon(100%_0,0_0,100%_100%)]">
+<span class="font-label-sm text-[10px] text-on-tertiary">LVL 3</span>
+</div>
+<div class="w-full aspect-square bg-gradient-to-br from-surface-container-highest to-surface-container mb-4 overflow-hidden">
+<img class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" data-alt="A collection of holographic glowing blue gummy bears floating in a zero-gravity transparent tube. Cyberpunk snack aesthetic, vivid neon cyan lighting, dark navy background, intricate tech details on the tube frame." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCXHGRc0_3CJroGlz46p9496SWViMa9fSSCeIG4N5hZe3abnIvjgunrerWzkcF3O-w4Dp8i4BcJsyUS0yFpOHonbgNdNtUuZjjyWNogkre4TRjHJTzG-pTeBWzH3QFXdEPnYUGlbzB73hfzbgP4BUX4ThXzF409E6sKjdqUYyxhJJrHANy_NCNmX1eJ4MpixGeCXaV5K0ux81uF9_ZnNFTy0AHmMD3WfgGZ4YKMQAgt_Mjs5PVTm2-jrQ">
+</div>
+<div class="flex justify-between items-start mb-1">
+<h4 class="font-headline-md text-headline-md">Lays Classic</h4>
+<span class="bg-tertiary text-on-tertiary px-2 py-0.5 text-[10px] font-label-sm">RARE</span>
+</div>
+<p class="text-on-surface-variant font-label-sm text-[12px] mb-4">+20 Stamina / 1h</p>
+<div class="flex justify-between items-center">
+<span class="font-headline-md text-tertiary">85 CR</span>
+<button class="bg-on-surface/10 hover:bg-on-surface/20 p-2 transition-colors">
+<span class="material-symbols-outlined" data-icon="add_shopping_cart">add_shopping_cart</span>
+</button>
+</div>
+</div>
+<!-- Card 4: Epic -->
+<div class="relative group bg-surface-container-low p-4 glow-epic overflow-hidden transition-all duration-300 hover:translate-y-[-4px]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-primary-container flex justify-end items-start p-1 clip-path-[polygon(100%_0,0_0,100%_100%)]">
+<span class="font-label-sm text-[10px] text-on-primary-container">LVL 12</span>
+</div>
+<div class="w-full aspect-square bg-gradient-to-br from-surface-container-highest to-surface-container mb-4 overflow-hidden">
+<img class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" data-alt="A premium chocolate bar wrapped in iridescent chrome foil reflecting purple and magenta lights, broken in half to reveal a glowing neon core. Dramatic lighting, macro detail, tactical gaming UI elements in the frame corners." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAfNRTVfIYr1Lrx4NkDMa12NfYNlUVpMrtGrfnxs7Ct4YQzEZZvcG_fv-c1a49TaRQQpwYo2AKBorCeeiswpTL8sjDXJsMxCjCJeTIZW77Zz2qZ7-x62Et85OgCx8O-cGGtKAtqF1kf6q1RvRTsfHgCaldN9Pzt3aqVkm7T-fbkMIyxISY-7n0rRyeUhxaVfjQQ3fSZLFtwD5hN5GOwxPDS83Fx376-0_kJ3pF9gRD6sYieh1KOocsmeA">
+</div>
+<div class="flex justify-between items-start mb-1">
+<h4 class="font-headline-md text-headline-md">Kool-Aid Jammers</h4>
+<span class="bg-primary-container text-on-primary-container px-2 py-0.5 text-[10px] font-label-sm">EPIC</span>
+</div>
+<p class="text-on-surface-variant font-label-sm text-[12px] mb-4">+40 Intelligence / 2h</p>
+<div class="flex justify-between items-center">
+<span class="font-headline-md text-primary">310 CR</span>
+<button class="bg-on-surface/10 hover:bg-on-surface/20 p-2 transition-colors">
+<span class="material-symbols-outlined" data-icon="add_shopping_cart">add_shopping_cart</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- How It Works HUD Row -->
+<section class="py-12 border-t border-outline-variant/30">
+<h3 class="text-center font-label-sm text-label-sm text-outline-variant mb-12 tracking-[0.2em] uppercase">Deployment Protocol</h3>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-12 relative">
+<!-- Connectors for Desktop -->
+<div class="hidden md:block absolute top-[40px] left-[25%] right-[25%] h-[2px] bg-gradient-to-r from-transparent via-primary/30 to-transparent"></div>
+<div class="flex flex-col items-center text-center">
+<div class="w-20 h-20 hexagon-frame bg-surface-container border-2 border-primary flex items-center justify-center mb-6 relative group">
+<div class="absolute inset-0 bg-primary/10 group-hover:bg-primary/20 transition-colors"></div>
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="shopping_basket">shopping_basket</span>
+<div class="absolute -bottom-2 -right-2 bg-primary text-on-primary w-6 h-6 rounded-full font-label-sm text-xs flex items-center justify-center">1</div>
+</div>
+<h4 class="font-headline-md text-headline-md text-on-surface mb-2">Gatorade Glacier Freeze</h4>
+<p class="text-on-surface-variant text-body-md max-w-[200px]">Browse the daily drop and select your preferred rations.</p>
+</div>
+<div class="flex flex-col items-center text-center">
+<div class="w-20 h-20 hexagon-frame bg-surface-container border-2 border-secondary flex items-center justify-center mb-6 relative group">
+<div class="absolute inset-0 bg-secondary/10 group-hover:bg-secondary/20 transition-colors"></div>
+<span class="material-symbols-outlined text-secondary text-3xl" data-icon="lock_open">lock_open</span>
+<div class="absolute -bottom-2 -right-2 bg-secondary text-on-secondary w-6 h-6 rounded-full font-label-sm text-xs flex items-center justify-center">2</div>
+</div>
+<h4 class="font-headline-md text-headline-md text-on-surface mb-2">Lays Classic</h4>
+<p class="text-on-surface-variant text-body-md max-w-[200px]">Secure your items via the app and receive your locker code.</p>
+</div>
+<div class="flex flex-col items-center text-center">
+<div class="w-20 h-20 hexagon-frame bg-surface-container border-2 border-tertiary flex items-center justify-center mb-6 relative group">
+<div class="absolute inset-0 bg-tertiary/10 group-hover:bg-tertiary/20 transition-colors"></div>
+<span class="material-symbols-outlined text-tertiary text-3xl" data-icon="inventory">inventory</span>
+<div class="absolute -bottom-2 -right-2 bg-tertiary text-on-tertiary w-6 h-6 rounded-full font-label-sm text-xs flex items-center justify-center">3</div>
+</div>
+<h4 class="font-headline-md text-headline-md text-on-surface mb-2">Kool-Aid Jammers</h4>
+<p class="text-on-surface-variant text-body-md max-w-[200px]">Visit the LoopLocker in the main hall and claim your gear.</p>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Navigation (Mobile) -->
+<nav class="md:hidden fixed bottom-0 w-full z-50 h-20 clip-path-[polygon(5%_0%,95%_0%,100%_100%,0%_100%)] bg-gradient-to-t from-surface-container-highest to-surface-container shadow-[0_-10px_30px_rgba(167,200,255,0.2)]">
+<div class="flex justify-around items-end w-full px-4 pb-2 h-full">
+<button class="flex flex-col items-center justify-center text-secondary-container bg-secondary/10 rounded-xl px-6 py-2 border-t-4 border-secondary shadow-[0_0_15px_rgba(255,214,91,0.5)] translate-y-[-2px]">
+<span class="material-symbols-outlined" data-icon="location_searching">location_searching</span>
+<span class="font-label-sm text-label-sm">Drop Zone</span>
+</button>
+<button class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant/50 transition-colors">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+<span class="font-label-sm text-label-sm">The Locker</span>
+</button>
+<button class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant/50 transition-colors">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="font-label-sm text-label-sm">Mission</span>
+</button>
+<button class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant/50 transition-colors">
+<span class="material-symbols-outlined" data-icon="shopping_bag">shopping_bag</span>
+<span class="font-label-sm text-label-sm">Loadout</span>
+</button>
+</div>
+</nav>
+<script>
+        // Particle Generation
+        const particleContainer = document.getElementById('particle-container');
+        const particleCount = 40;
+
+        for (let i = 0; i < particleCount; i++) {
+            const particle = document.createElement('div');
+            particle.classList.add('particle');
+            
+            const size = Math.random() * 2 + 1;
+            particle.style.width = `${size}px`;
+            particle.style.height = `${size}px`;
+            
+            particle.style.left = `${Math.random() * 100}vw`;
+            particle.style.top = `${Math.random() * 100}vh`;
+            
+            particle.style.animationDelay = `${Math.random() * 10}s`;
+            particle.style.animationDuration = `${Math.random() * 10 + 10}s`;
+            
+            particleContainer.appendChild(particle);
+        }
+
+        // Countdown Timer Logic
+        function updateCountdown() {
+            const countdownEl = document.getElementById('countdown');
+            let [hours, minutes, seconds] = countdownEl.innerText.split(':').map(Number);
+            
+            seconds--;
+            if (seconds < 0) {
+                seconds = 59;
+                minutes--;
+                if (minutes < 0) {
+                    minutes = 59;
+                    hours--;
+                }
+            }
+            
+            if (hours < 0) hours = 0;
+
+            countdownEl.innerText = [
+                hours.toString().padStart(2, '0'),
+                minutes.toString().padStart(2, '0'),
+                seconds.toString().padStart(2, '0')
+            ].join(':');
+        }
+
+        setInterval(updateCountdown, 1000);
+    </script>
+
+
+</body></html>

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>LOOPLOCKERS | Loadout Review</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Archivo+Narrow:wght@400;600;700&amp;family=JetBrains+Mono:wght@700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        body {
+            background-color: #07070F;
+            color: #e4e1ee;
+            overflow-x: hidden;
+        }
+
+        .shard-clip {
+            clip-path: polygon(4% 0%, 100% 0%, 96% 100%, 0% 100%);
+        }
+
+        .shard-clip-reverse {
+            clip-path: polygon(0% 0%, 96% 0%, 100% 100%, 4% 100%);
+        }
+
+        .button-bevel {
+            clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+        }
+
+        .scanline-overlay {
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%,
+                rgba(0, 0, 0, 0.25) 50%
+            ), linear-gradient(
+                90deg,
+                rgba(255, 0, 0, 0.06),
+                rgba(0, 255, 0, 0.02),
+                rgba(0, 0, 255, 0.06)
+            );
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        @keyframes scan {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+
+        .scan-anim::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(transparent, rgba(221, 183, 255, 0.1), transparent);
+            animation: scan 4s linear infinite;
+        }
+
+        .rarity-common { border-color: #988d9f; }
+        .rarity-rare { border-color: #a7c8ff; }
+        .rarity-epic { border-color: #ddb7ff; }
+        .rarity-legendary { border-color: #ffd65b; }
+
+        .hex-btn {
+            clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary": "#3d2f00",
+                        "outline": "#988d9f",
+                        "surface-container-high": "#292932",
+                        "on-primary-fixed-variant": "#6900b3",
+                        "on-tertiary-container": "#002a55",
+                        "on-secondary-fixed": "#241a00",
+                        "inverse-surface": "#e4e1ee",
+                        "surface-container-low": "#1b1b24",
+                        "secondary": "#ffd65b",
+                        "secondary-container": "#e7b900",
+                        "inverse-primary": "#842bd2",
+                        "on-tertiary": "#003061",
+                        "surface-tint": "#ddb7ff",
+                        "surface-bright": "#393842",
+                        "surface": "#13131b",
+                        "surface-container-lowest": "#0d0d16",
+                        "primary": "#ddb7ff",
+                        "on-secondary-container": "#5f4a00",
+                        "secondary-fixed": "#ffe08b",
+                        "inverse-on-surface": "#302f39",
+                        "error-container": "#93000a",
+                        "tertiary-container": "#3a91fb",
+                        "surface-container-highest": "#34343e",
+                        "surface-container": "#1f1f28",
+                        "primary-fixed-dim": "#ddb7ff",
+                        "surface-variant": "#34343e",
+                        "on-primary": "#490080",
+                        "on-background": "#e4e1ee",
+                        "on-tertiary-fixed": "#001b3c",
+                        "tertiary-fixed": "#d5e3ff",
+                        "on-error": "#690005",
+                        "primary-container": "#b76dff",
+                        "background": "#13131b",
+                        "on-secondary-fixed-variant": "#584400",
+                        "on-surface": "#e4e1ee",
+                        "outline-variant": "#4d4354",
+                        "on-primary-container": "#400071",
+                        "tertiary-fixed-dim": "#a7c8ff",
+                        "on-surface-variant": "#cfc2d6",
+                        "on-tertiary-fixed-variant": "#004689",
+                        "on-primary-fixed": "#2c0051",
+                        "tertiary": "#a7c8ff",
+                        "secondary-fixed-dim": "#f0c110",
+                        "surface-dim": "#13131b",
+                        "error": "#ffb4ab",
+                        "on-error-container": "#ffdad6",
+                        "primary-fixed": "#f0dbff"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Bebas Neue"],
+                        "body-lg": ["Archivo Narrow"],
+                        "label-sm": ["JetBrains Mono"],
+                        "headline-md": ["Bebas Neue"],
+                        "display-xl": ["Bebas Neue"],
+                        "body-md": ["Archivo Narrow"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["48px", {"lineHeight": "48px", "fontWeight": "700"}],
+                        "body-lg": ["18px", {"lineHeight": "24px", "fontWeight": "700"}],
+                        "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "700"}],
+                        "headline-md": ["24px", {"lineHeight": "28px", "fontWeight": "700"}],
+                        "display-xl": ["72px", {"lineHeight": "72px", "letterSpacing": "0.05em", "fontWeight": "700"}],
+                        "body-md": ["16px", {"lineHeight": "22px", "fontWeight": "600"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-surface font-body-md selection:bg-primary selection:text-on-primary">
+<!-- Top Navigation Bar -->
+<header class="fixed top-0 w-full z-50 clip-path-[polygon(0%_0%,100%_0%,100%_90%,50%_100%,0%_90%)] bg-surface/80 backdrop-blur-md border-b-2 border-secondary shadow-[0_0_20px_rgba(255,214,91,0.3)]">
+<div class="flex justify-between items-center px-margin-mobile md:px-margin-desktop py-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" data-icon="monetization_on">monetization_on</span>
+<h1 class="text-headline-md font-headline-md text-primary drop-shadow-[0_0_10px_rgba(221,183,255,0.8)]">LOOPLOCKERS</h1>
+</div>
+<div class="flex items-center gap-4">
+<div class="hidden md:flex gap-6 mr-8">
+<a class="text-on-surface-variant font-label-sm hover:text-primary transition-colors duration-300" href="#">DROP ZONE</a>
+<a class="text-secondary font-label-sm hover:text-primary transition-colors duration-300" href="#">THE LOCKER</a>
+<a class="text-on-surface-variant font-label-sm hover:text-primary transition-colors duration-300" href="#">MISSION</a>
+</div>
+<div class="flex items-center gap-2 bg-surface-container px-4 py-1 rounded-full border border-outline-variant">
+<span class="material-symbols-outlined text-secondary scale-75" data-icon="stars" style="font-variation-settings: 'FILL' 1;">stars</span>
+<span class="font-label-sm text-secondary">99,999</span>
+</div>
+</div>
+</div>
+</header>
+<main class="pt-32 pb-32 px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto min-h-screen">
+<div class="flex flex-col gap-4 mb-12">
+<h2 class="text-display-xl font-display-xl text-primary flex items-center gap-4">
+<span class="material-symbols-outlined text-6xl" data-icon="shopping_cart">shopping_cart</span>
+                LOADOUT REVIEW
+            </h2>
+<div class="h-1 w-32 bg-secondary shadow-[0_0_10px_#ffd65b]"></div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-12 items-start">
+<!-- Left Column: Loadout Items -->
+<div class="lg:col-span-2 flex flex-col gap-6">
+<!-- Item Row: Legendary -->
+<div class="group relative bg-surface-container/40 p-4 shard-clip border-l-4 border-legendary hover:bg-surface-container transition-all duration-300 rarity-legendary border-solid">
+<div class="flex flex-col md:flex-row items-center gap-6">
+<div class="relative w-24 h-24 bg-surface-container-highest shard-clip flex-shrink-0 flex items-center justify-center border-2 border-secondary shadow-[0_0_15px_rgba(255,214,91,0.2)]">
+<img class="w-20 h-20 object-contain" data-alt="A futuristic, high-tech neon snack package for 'Quantum Chips' featuring glowing gold circuits and sleek carbon fiber textures. The packaging sits in a dark, atmospheric battle royale loot room illuminated by amber spotlights and flickering cyan data screens. The visual style is sharp, detailed, and arcade-inspired with intense contrast." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBLgLWnBq7MJfgmXIhpmGczFXpSXoLJ19fEJqPK2MeQBttlVKPh6v-nU3Jl7AUrXBaQOJcxxc9qwEsPK-sbsdGVSYnN0WvRbBsqiU-AfEIWUB_kTVesMKCh5heMhdGhY4mjREJQqQ1DBX02FHMuwE82BQ2FcmVPo3RSffDljkEBsaJRfjQ440E1QrGhF80FIX3MoXQsMJC8_kduYuKRcHgB71yRHrE3XgvD_Gx4x0XKIX-Me4JsnU8Y8g"/>
+<div class="absolute -top-1 -right-1 bg-secondary text-on-secondary font-label-sm px-2 py-0.5 text-[10px] skew-x-[-15deg]">LEGENDARY</div>
+</div>
+<div class="flex-grow">
+<h3 class="text-headline-md font-headline-md text-on-surface tracking-wider">QUANTUM CARBON-CHIPS</h3>
+<p class="text-outline text-body-md italic">Tier 5 Performance Enhancer</p>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2">
+<button class="hex-btn w-10 h-10 bg-surface-container-high text-primary hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined" data-icon="remove">remove</span>
+</button>
+<span class="font-headline-md text-2xl w-8 text-center">02</span>
+<button class="hex-btn w-10 h-10 bg-surface-container-high text-primary hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+</button>
+</div>
+<div class="text-right min-w-[100px]">
+<p class="text-secondary font-headline-md text-2xl">4,500 <span class="text-sm">LU</span></p>
+</div>
+</div>
+</div>
+</div>
+<!-- Item Row: Epic -->
+<div class="group relative bg-surface-container/40 p-4 shard-clip border-l-4 border-epic hover:bg-surface-container transition-all duration-300 rarity-epic border-solid">
+<div class="flex flex-col md:flex-row items-center gap-6">
+<div class="relative w-24 h-24 bg-surface-container-highest shard-clip flex-shrink-0 flex items-center justify-center border-2 border-primary shadow-[0_0_15px_rgba(221,183,255,0.2)]">
+<img class="w-20 h-20 object-contain" data-alt="A glowing purple energy drink can named 'Void Velocity' with animated liquid energy patterns. It is positioned on a metallic, industrial platform with sparks flying in the background. High-octane gaming aesthetic with deep shadows and intense neon violet highlights. The image captures the feeling of a rare loot drop in a sci-fi arena." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDNyMdMr0pPg9a3CnsFsqwQ4ppKkIAnrK0h95iMkgxB-jG9QRqhAy-3d-FRQTQ6p9SEhfDgm9q5WYI-YVIHwb3pufsXWYw7a-6_HSFDyhPb5QY4z-wigKnT8Qt4G61VZDMHeKHLTxji74nbjuAlZHkWAVU_4G4e0MT0CpMEBCcNDVrmVZdspZh3sF3lO7vwCuG8Ecci2DwBrQWUm-ApFAy3TRvGz1SOGloQLPHSdx06cYCAL2DJbl9rKA"/>
+<div class="absolute -top-1 -right-1 bg-primary text-on-primary font-label-sm px-2 py-0.5 text-[10px] skew-x-[-15deg]">EPIC</div>
+</div>
+<div class="flex-grow">
+<h3 class="text-headline-md font-headline-md text-on-surface tracking-wider">VOID VELOCITY REGEN</h3>
+<p class="text-outline text-body-md italic">Instant Stamina Infusion</p>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2">
+<button class="hex-btn w-10 h-10 bg-surface-container-high text-primary hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined" data-icon="remove">remove</span>
+</button>
+<span class="font-headline-md text-2xl w-8 text-center">01</span>
+<button class="hex-btn w-10 h-10 bg-surface-container-high text-primary hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+</button>
+</div>
+<div class="text-right min-w-[100px]">
+<p class="text-secondary font-headline-md text-2xl">1,200 <span class="text-sm">LU</span></p>
+</div>
+</div>
+</div>
+</div>
+<!-- Item Row: Rare -->
+<div class="group relative bg-surface-container/40 p-4 shard-clip border-l-4 border-rare hover:bg-surface-container transition-all duration-300 rarity-rare border-solid">
+<div class="flex flex-col md:flex-row items-center gap-6">
+<div class="relative w-24 h-24 bg-surface-container-highest shard-clip flex-shrink-0 flex items-center justify-center border-2 border-tertiary shadow-[0_0_15px_rgba(167,200,255,0.2)]">
+<img class="w-20 h-20 object-contain" data-alt="A pack of tactical nutrient bars wrapped in electric blue foil with a digital camouflage pattern. The bars are stacked on a gritty urban asphalt surface with rain puddles reflecting neon blue signage. Cinematic lighting, sharp focus, and a gritty tactical gaming atmosphere with a cold blue color palette." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAALKkXpUy4XZPdwuqvcOzAu9kr0LqnC2GStYURYPUDv-ClRZjIt4djyuB_6pjAwKt-1KWNoZSwgDbe6tgf3qz5SL4xDwrtwOzkSp1_aePfFTW4xvIv0iyQszNtisUMZL9Unwb2bq89be-Q_Emp1UTSjYI1Jei_5PvEH9LrDhfXoh8dsCzkBtCN_HkYyvYFNVUMKA5o9WgxCQk_VUXbe9o48W2mlXGiB-0cvW2pFIWb6fm_FfgLs3EE8A"/>
+<div class="absolute -top-1 -right-1 bg-tertiary text-on-tertiary font-label-sm px-2 py-0.5 text-[10px] skew-x-[-15deg]">RARE</div>
+</div>
+<div class="flex-grow">
+<h3 class="text-headline-md font-headline-md text-on-surface tracking-wider">TACTICAL NUTRIENT PACK</h3>
+<p class="text-outline text-body-md italic">Sustained Bio-Efficiency</p>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2">
+<button class="hex-btn w-10 h-10 bg-surface-container-high text-primary hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined" data-icon="remove">remove</span>
+</button>
+<span class="font-headline-md text-2xl w-8 text-center">05</span>
+<button class="hex-btn w-10 h-10 bg-surface-container-high text-primary hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+</button>
+</div>
+<div class="text-right min-w-[100px]">
+<p class="text-secondary font-headline-md text-2xl">2,500 <span class="text-sm">LU</span></p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Column: Extraction Summary -->
+<aside class="sticky top-32">
+<div class="relative overflow-hidden bg-surface-container-lowest border-2 border-outline-variant p-8 shard-clip-reverse shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
+<div class="scanline-overlay absolute inset-0 opacity-30"></div>
+<div class="scan-anim absolute inset-0"></div>
+<div class="relative z-10">
+<div class="flex items-center justify-between mb-8">
+<h3 class="text-headline-md font-headline-md text-on-surface">EXTRACTION LOG</h3>
+<span class="material-symbols-outlined text-outline animate-pulse" data-icon="sensors">sensors</span>
+</div>
+<div class="space-y-4 mb-8">
+<label class="block text-label-sm text-outline mb-2 uppercase tracking-[0.2em]">Redeem Voucher Code</label>
+<div class="relative">
+<input class="w-full bg-surface/50 border-2 border-outline-variant px-4 py-3 font-label-sm text-primary placeholder:text-outline-variant focus:border-primary focus:ring-0 transition-all outline-none" placeholder="ENTER_CODE_HERE..." type="text"/>
+<div class="absolute right-3 top-1/2 -translate-y-1/2 flex gap-1">
+<div class="w-1 h-4 bg-primary animate-pulse"></div>
+</div>
+</div>
+<button class="w-full py-2 bg-surface-variant text-on-surface-variant font-label-sm hover:bg-outline-variant hover:text-on-surface transition-colors uppercase tracking-widest text-[10px]">Verify Credentials</button>
+</div>
+<div class="space-y-4 border-t border-outline-variant/30 pt-6 mb-8">
+<div class="flex justify-between items-center text-body-md">
+<span class="text-outline">SUBTOTAL</span>
+<span class="font-label-sm">8,200 LU</span>
+</div>
+<div class="flex justify-between items-center text-body-md">
+<span class="text-outline">TAX/FEE (5%)</span>
+<span class="font-label-sm">410 LU</span>
+</div>
+<div class="flex justify-between items-center pt-4 border-t border-secondary/30">
+<span class="text-headline-md font-headline-md text-secondary tracking-widest">TOTAL</span>
+<div class="text-right">
+<p class="text-4xl font-headline-md text-secondary drop-shadow-[0_0_10px_rgba(255,214,91,0.5)]">8,610 LU</p>
+<p class="text-[10px] text-outline font-label-sm">CONVERTED TO LUKEN CREDITS</p>
+</div>
+</div>
+</div>
+<button class="group relative w-full h-16 button-bevel bg-secondary overflow-hidden transition-transform active:scale-95 duration-100">
+<div class="absolute inset-0 bg-gradient-to-b from-white/20 to-transparent"></div>
+<div class="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-colors"></div>
+<!-- Scanning effect -->
+<div class="absolute top-0 -left-[100%] w-full h-full bg-gradient-to-r from-transparent via-white/40 to-transparent skew-x-[-45deg] group-hover:left-[100%] transition-all duration-700 ease-in-out"></div>
+<span class="relative z-10 text-on-secondary font-headline-md text-2xl tracking-[0.2em]">PROCEED TO EXTRACTION</span>
+</button>
+<div class="mt-6 flex items-center justify-center gap-4 opacity-50">
+<div class="h-[1px] flex-grow bg-outline-variant"></div>
+<span class="text-[10px] font-label-sm text-outline">SECURE DROP PROTOCOL</span>
+<div class="h-[1px] flex-grow bg-outline-variant"></div>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</main>
+<!-- Bottom Navigation Bar (Mobile) -->
+<nav class="md:hidden fixed bottom-0 w-full z-50 h-20 clip-path-[polygon(5%_0%,95%_0%,100%_100%,0%_100%)] bg-gradient-to-t from-surface-container-highest to-surface-container shadow-[0_-10px_30px_rgba(167,200,255,0.2)]">
+<div class="flex justify-around items-end w-full px-4 pb-2 h-full">
+<a class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant/50" href="#">
+<span class="material-symbols-outlined" data-icon="location_searching">location_searching</span>
+<span class="text-label-sm font-label-sm">Drop Zone</span>
+</a>
+<a class="flex flex-col items-center justify-center text-secondary-container bg-secondary/10 rounded-xl px-6 py-2 border-t-4 border-secondary shadow-[0_0_15px_rgba(255,214,91,0.5)] translate-y-[-2px]" href="#">
+<span class="material-symbols-outlined" data-icon="inventory_2" style="font-variation-settings: 'FILL' 1;">inventory_2</span>
+<span class="text-label-sm font-label-sm">The Locker</span>
+</a>
+<a class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant/50" href="#">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="text-label-sm font-label-sm">Mission</span>
+</a>
+<a class="flex flex-col items-center justify-center text-outline px-4 py-2 hover:bg-surface-variant/50" href="#">
+<span class="material-symbols-outlined" data-icon="shopping_bag">shopping_bag</span>
+<span class="text-label-sm font-label-sm">Loadout</span>
+</a>
+</div>
+</nav>
+<script>
+        // Micro-interactions for quantity buttons
+        document.querySelectorAll('.hex-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const span = this.parentElement.querySelector('span.font-headline-md');
+                let count = parseInt(span.textContent);
+                if (this.querySelector('[data-icon="add"]')) {
+                    count++;
+                } else if (count > 0) {
+                    count--;
+                }
+                span.textContent = count.toString().padStart(2, '0');
+                
+                // Add a quick feedback animation
+                span.classList.add('scale-125', 'text-secondary');
+                setTimeout(() => span.classList.remove('scale-125', 'text-secondary'), 150);
+            });
+        });
+    </script>
+</body></html>

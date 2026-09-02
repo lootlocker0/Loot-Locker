@@ -1,0 +1,361 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Archivo+Narrow:wght@400;600;700&amp;family=JetBrains+Mono:wght@700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@100..900&amp;family=Bebas+Neue:wght@100..900&amp;family=JetBrains+Mono:wght@100..900&amp;display=swap" rel="stylesheet">
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .clip-shard {
+            clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+        }
+        .clip-top-bar {
+            clip-path: polygon(0% 0%, 100% 0%, 100% 90%, 50% 100%, 0% 90%);
+        }
+        .clip-bottom-nav {
+            clip-path: polygon(5% 0%, 95% 0%, 100% 100%, 0% 100%);
+        }
+        .clip-card-corner {
+            clip-path: polygon(0 0, 100% 0, 100% 70%, 85% 100%, 0 100%);
+        }
+        .shimmer-sweep {
+            position: relative;
+            overflow: hidden;
+        }
+        .shimmer-sweep::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(
+                45deg,
+                transparent 45%,
+                rgba(255, 255, 255, 0.1) 50%,
+                transparent 55%
+            );
+            animation: sweep 3s infinite;
+        }
+        @keyframes sweep {
+            0% { transform: translate(-100%, -100%); }
+            100% { transform: translate(100%, 100%); }
+        }
+        .beveled-shine {
+            box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+        }
+        body {
+            background-color: #07070F;
+            color: #e4e1ee;
+            overflow-x: hidden;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary": "#3d2f00",
+                        "outline": "#988d9f",
+                        "surface-container-high": "#292932",
+                        "on-primary-fixed-variant": "#6900b3",
+                        "on-tertiary-container": "#002a55",
+                        "on-secondary-fixed": "#241a00",
+                        "inverse-surface": "#e4e1ee",
+                        "surface-container-low": "#1b1b24",
+                        "secondary": "#ffd65b",
+                        "secondary-container": "#e7b900",
+                        "inverse-primary": "#842bd2",
+                        "on-tertiary": "#003061",
+                        "surface-tint": "#ddb7ff",
+                        "surface-bright": "#393842",
+                        "surface": "#13131b",
+                        "surface-container-lowest": "#0d0d16",
+                        "primary": "#ddb7ff",
+                        "on-secondary-container": "#5f4a00",
+                        "secondary-fixed": "#ffe08b",
+                        "inverse-on-surface": "#302f39",
+                        "error-container": "#93000a",
+                        "tertiary-container": "#3a91fb",
+                        "surface-container-highest": "#34343e",
+                        "surface-container": "#1f1f28",
+                        "primary-fixed-dim": "#ddb7ff",
+                        "surface-variant": "#34343e",
+                        "on-primary": "#490080",
+                        "on-background": "#e4e1ee",
+                        "on-tertiary-fixed": "#001b3c",
+                        "tertiary-fixed": "#d5e3ff",
+                        "on-error": "#690005",
+                        "primary-container": "#b76dff",
+                        "background": "#13131b",
+                        "on-secondary-fixed-variant": "#584400",
+                        "on-surface": "#e4e1ee",
+                        "outline-variant": "#4d4354",
+                        "on-primary-container": "#400071",
+                        "tertiary-fixed-dim": "#a7c8ff",
+                        "on-surface-variant": "#cfc2d6",
+                        "on-tertiary-fixed-variant": "#004689",
+                        "on-primary-fixed": "#2c0051",
+                        "tertiary": "#a7c8ff",
+                        "secondary-fixed-dim": "#f0c110",
+                        "surface-dim": "#13131b",
+                        "error": "#ffb4ab",
+                        "on-error-container": "#ffdad6",
+                        "primary-fixed": "#f0dbff",
+                        "rarity-common": "#988d9f",
+                        "rarity-uncommon": "#4ade80",
+                        "rarity-rare": "#3a91fb",
+                        "rarity-epic": "#b76dff",
+                        "rarity-legendary": "#ffd65b"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Bebas Neue"],
+                        "body-lg": ["Archivo Narrow"],
+                        "label-sm": ["JetBrains Mono"],
+                        "headline-md": ["Bebas Neue"],
+                        "display-xl": ["Bebas Neue"],
+                        "body-md": ["Archivo Narrow"],
+                        "headline-lg-mobile": ["Bebas Neue"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["48px", {"lineHeight": "48px", "fontWeight": "700"}],
+                        "body-lg": ["18px", {"lineHeight": "24px", "fontWeight": "700"}],
+                        "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "700"}],
+                        "headline-md": ["24px", {"lineHeight": "28px", "fontWeight": "700"}],
+                        "display-xl": ["72px", {"lineHeight": "72px", "letterSpacing": "0.05em", "fontWeight": "700"}],
+                        "body-md": ["16px", {"lineHeight": "22px", "fontWeight": "600"}],
+                        "headline-lg-mobile": ["32px", {"lineHeight": "32px", "fontWeight": "700"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  <style>
+            @keyframes scanline {
+                0% { transform: translateY(-100%); }
+                100% { transform: translateY(100%); }
+            }
+        </style></head>
+<body class="bg-background text-on-background font-body-md text-body-md">
+<!-- Top Navigation Shell -->
+<header class="fixed top-0 w-full z-50 clip-top-bar bg-surface/80 backdrop-blur-md border-b-2 border-secondary shadow-[0_0_20px_rgba(255,214,91,0.3)] flex justify-between items-center px-margin-mobile md:px-margin-desktop py-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" data-icon="monetization_on">monetization_on</span>
+<h1 class="text-headline-md font-headline-md text-primary drop-shadow-[0_0_10px_rgba(221,183,255,0.8)] tracking-tight">LOOPLOCKERS</h1>
+</div>
+<!-- Filter Bar Desktop -->
+<div class="hidden md:flex gap-4 items-center">
+<div class="flex gap-2">
+<button class="px-4 py-1 bg-rarity-common/20 border border-rarity-common text-on-surface font-label-sm text-label-sm hover:bg-rarity-common/40 transition-all">COMMON</button>
+<button class="px-4 py-1 bg-rarity-uncommon/20 border border-rarity-uncommon text-on-surface font-label-sm text-label-sm hover:bg-rarity-uncommon/40 transition-all">UNCOMMON</button>
+<button class="px-4 py-1 bg-rarity-rare/20 border border-rarity-rare text-on-surface font-label-sm text-label-sm hover:bg-rarity-rare/40 transition-all">RARE</button>
+<button class="px-4 py-1 bg-rarity-epic/20 border border-rarity-epic text-on-surface font-label-sm text-label-sm hover:bg-rarity-epic/40 transition-all">EPIC</button>
+<button class="px-4 py-1 bg-rarity-legendary/20 border border-rarity-legendary text-on-surface font-label-sm text-label-sm hover:bg-rarity-legendary/40 transition-all">LEGENDARY</button>
+</div>
+</div>
+<div class="flex items-center gap-3 bg-secondary/10 px-4 py-1 rounded-full border border-secondary shadow-[0_0_10px_rgba(255,214,91,0.2)]">
+<span class="material-symbols-outlined text-secondary" data-icon="monetization_on" style="font-variation-settings: 'FILL' 1;">monetization_on</span>
+<span class="font-label-sm text-label-sm text-secondary">99,999</span>
+</div>
+</header>
+<main class="pt-32 pb-32 px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto">
+<!-- Hero Header -->
+<div class="mb-12 relative overflow-hidden">
+<div class="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-50 skew-x-[-15deg]"></div>
+<h2 class="font-display-xl text-display-xl text-on-background tracking-widest relative z-10">THE LOCKER</h2>
+<div class="h-1 w-32 bg-primary mt-2 relative z-10"></div>
+</div>
+<!-- Products Grid -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-gutter">
+<!-- Item Card: Legendary -->
+<div class="group relative bg-surface-container border-2 border-rarity-legendary shadow-[0_0_15px_rgba(255,214,91,0.3)] transition-all duration-300 hover:-translate-y-2 hover:shadow-[0_0_30px_rgba(255,214,91,0.5)] shimmer-sweep">
+<div class="absolute top-0 right-0 w-12 h-12 bg-rarity-legendary clip-path-[polygon(100%_0,100%_100%,0_0)] flex items-start justify-end p-1 z-20">
+<span class="text-on-secondary font-label-sm text-[10px]">LV.50</span>
+</div>
+<div class="aspect-square relative overflow-hidden bg-gradient-to-br from-[#07070F] to-rarity-legendary/20 p-4">
+<img class="w-full h-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] transition-transform duration-500 group-hover:scale-110" data-alt="A futuristic tactical weapon skin with golden accents and glowing energy cores, floating against a dark navy digital void. High-contrast arcade gaming HUD aesthetic with shard-like lighting effects. Intense outer glows and hyper-realistic metallic textures." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAm0XDXBQ8K06lSi5mRpz5jbwchYiyNAqV6FPAMh0is2hXZcMKU7IYvs-VmHRdFPHdkQcRYXNWamXs43GqtQySiU4SiaCNkCM0bXkciAh8HibjnaFKtfwUadhXf7VKIyUhrW0Tg0jsGfXW2OcP07KZYre62TaZg_UPOG3GKXeAg0OUFje8hCkX10rtQkWupRY13C_XCguAb8DEszHqc816g8eJxGsXM_IJFSykKeDMyFlrAoPqf96XDcA">
+</div>
+<div class="p-4 space-y-4">
+<div>
+<span class="bg-rarity-legendary text-black px-2 py-0.5 font-label-sm text-label-sm">LEGENDARY</span>
+<h3 class="font-headline-md text-headline-md mt-2 group-hover:text-rarity-legendary transition-colors">DORITOS</h3>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="monetization_on">monetization_on</span>
+<span class="font-label-sm text-label-sm text-on-surface">2,500</span>
+</div>
+<button class="clip-shard bg-rarity-epic px-6 py-2 text-on-primary font-label-sm text-label-sm beveled-shine hover:bg-white hover:text-black transition-all">ADD TO LOCKER</button>
+</div>
+</div>
+</div>
+<!-- Item Card: Epic -->
+<div class="group relative bg-surface-container border-2 border-rarity-epic shadow-[0_0_15px_rgba(183,109,255,0.3)] transition-all duration-300 hover:-translate-y-2 hover:shadow-[0_0_30px_rgba(183,109,255,0.5)]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-rarity-epic clip-path-[polygon(100%_0,100%_100%,0_0)] flex items-start justify-end p-1 z-20">
+<span class="text-on-primary font-label-sm text-[10px]">LV.35</span>
+</div>
+<div class="aspect-square relative overflow-hidden bg-gradient-to-br from-[#07070F] to-rarity-epic/20 p-4">
+<img class="w-full h-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] transition-transform duration-500 group-hover:scale-110" data-alt="A sleek violet energy shield generator module for a battle royale character. Holographic purple interface rings around the center. Neon lighting, sharp beveled edges, deep navy backdrop with digital noise particles. Professional gaming asset render style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB5HRsbZZ0k7JzD0PPXzbyOdOUDlC3isLJ9Oj9Terz6ZndSXEkMjTAnVUe6cp5t9tgifO3prBtTELrc3Ocq7-yTxZUAEZMghIzXScdgBbtmqVyfcSbnPedpg4EpOsYZTQbYGFyqw3cr-iT2og7D5dHw7X4lJ1f8Jf1nCVch0zlEqARRPgqku-bT1FY_I4PkNFxw_PuhcrWwWOqZmM0yFL-TA36U54afhXh2P9LW8pOJaiKmFsYcjSEcYw">
+</div>
+<div class="p-4 space-y-4">
+<div>
+<span class="bg-rarity-epic text-black px-2 py-0.5 font-label-sm text-label-sm">EPIC</span>
+<h3 class="font-headline-md text-headline-md mt-2 group-hover:text-rarity-epic transition-colors">LAYS</h3>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="monetization_on">monetization_on</span>
+<span class="font-label-sm text-label-sm text-on-surface">1,200</span>
+</div>
+<button class="clip-shard bg-rarity-epic px-6 py-2 text-on-primary font-label-sm text-label-sm beveled-shine hover:bg-white hover:text-black transition-all">ADD TO LOCKER</button>
+</div>
+</div>
+</div>
+<!-- Item Card: Rare -->
+<div class="group relative bg-surface-container border-2 border-rarity-rare shadow-[0_0_15px_rgba(58,145,251,0.3)] transition-all duration-300 hover:-translate-y-2 hover:shadow-[0_0_30px_rgba(58,145,251,0.5)]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-rarity-rare clip-path-[polygon(100%_0,100%_100%,0_0)] flex items-start justify-end p-1 z-20">
+<span class="text-on-tertiary font-label-sm text-[10px]">LV.20</span>
+</div>
+<div class="aspect-square relative overflow-hidden bg-gradient-to-br from-[#07070F] to-rarity-rare/20 p-4">
+<img class="w-full h-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] transition-transform duration-500 group-hover:scale-110" data-alt="A futuristic medical canister with bright cyan liquid and bubbling energy effects. High-tech carbon fiber housing, electric blue highlights, glowing status bar. Dark minimalist studio lighting, high contrast gaming equipment aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCN9oy--BWiEINUQsM0PIHsGPe_WF38VL-K0ZOBCKtkOLJwcg_-YCybKHUEYHQ3dKfWMHerKIW8Ah5bTsjRHhASVknUhwnHZt360c2SxNGs_XkTzhCp72RgFjpOC8ZMYGbVHrfB0c7dykRJ4anm8O8ZVFJiT5kguTEOSW2gZnEVICjF7mJPj0-h1GcQzY2zlDFioTSYqhIxBy4fNthFtFWCFHaTw2PX_87saj-3nGDHvXuW4epEiQ-ffg">
+</div>
+<div class="p-4 space-y-4">
+<div>
+<span class="bg-rarity-rare text-black px-2 py-0.5 font-label-sm text-label-sm">RARE</span>
+<h3 class="font-headline-md text-headline-md mt-2 group-hover:text-rarity-rare transition-colors">GATORADE</h3>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="monetization_on">monetization_on</span>
+<span class="font-label-sm text-label-sm text-on-surface">500</span>
+</div>
+<button class="clip-shard bg-rarity-epic px-6 py-2 text-on-primary font-label-sm text-label-sm beveled-shine hover:bg-white hover:text-black transition-all">ADD TO LOCKER</button>
+</div>
+</div>
+</div>
+<!-- Item Card: Uncommon -->
+<div class="group relative bg-surface-container border-2 border-rarity-uncommon shadow-[0_0_15px_rgba(74,222,128,0.3)] transition-all duration-300 hover:-translate-y-2 hover:shadow-[0_0_30px_rgba(74,222,128,0.5)]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-rarity-uncommon clip-path-[polygon(100%_0,100%_100%,0_0)] flex items-start justify-end p-1 z-20">
+<span class="text-on-secondary font-label-sm text-[10px]">LV.12</span>
+</div>
+<div class="aspect-square relative overflow-hidden bg-gradient-to-br from-[#07070F] to-rarity-uncommon/20 p-4">
+<img class="w-full h-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] transition-transform duration-500 group-hover:scale-110" data-alt="A tactical combat knife with a vibrating green plasma edge. Matte black handle with utility straps, bright neon green glow, volumetric lighting, dark industrial atmosphere. 3D digital art style for an inventory screen." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBcDzRxPm3GjpIhLx0NQTC_RY-aPELeH8A1VVPysJTcCF0UcqkmwA32y52XRomQ-RUnIiox6RM4ZjI_ff5C-H7i7w6gcLmaEygJB9fNbVmiQypyaQzZcAuN_vWYWVNDt48Tj89nx_Zmi_ajAHeAW3tBN2fGg9QaD3Ru9CR6KT6nhlGYuTyYYdYTg-KHAW7zaJ0ZuIF20UBT6T6x8unzc_X-j7gt3Oa8CD1V6lJnT5EFtlEFY9K9SUzROw">
+</div>
+<div class="p-4 space-y-4">
+<div>
+<span class="bg-rarity-uncommon text-black px-2 py-0.5 font-label-sm text-label-sm">UNCOMMON</span>
+<h3 class="font-headline-md text-headline-md mt-2 group-hover:text-rarity-uncommon transition-colors">KOOL-AID</h3>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="monetization_on">monetization_on</span>
+<span class="font-label-sm text-label-sm text-on-surface">250</span>
+</div>
+<button class="clip-shard bg-rarity-epic px-6 py-2 text-on-primary font-label-sm text-label-sm beveled-shine hover:bg-white hover:text-black transition-all">ADD TO LOCKER</button>
+</div>
+</div>
+</div>
+<!-- Duplicate items to fill grid -->
+<!-- Card 5 -->
+<div class="group relative bg-surface-container border-2 border-rarity-legendary shadow-[0_0_15px_rgba(255,214,91,0.3)] transition-all duration-300 hover:-translate-y-2 hover:shadow-[0_0_30px_rgba(255,214,91,0.5)] shimmer-sweep">
+<div class="absolute top-0 right-0 w-12 h-12 bg-rarity-legendary clip-path-[polygon(100%_0,100%_100%,0_0)] flex items-start justify-end p-1 z-20">
+<span class="text-on-secondary font-label-sm text-[10px]">LV.100</span>
+</div>
+<div class="aspect-square relative overflow-hidden bg-gradient-to-br from-[#07070F] to-rarity-legendary/20 p-4">
+<img class="w-full h-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)]" data-alt="Golden ornate armor chestpiece with glowing amber power cores. Intricate high-fantasy futuristic fusion design, reflective gold plating, dark deep space background. Dramatic cinematic lighting with high-octane glows." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB1MENDRxszcLWJcqI7YwEWUUnSx_EAcfzfVbIXd5oeGKq545Tnv5lNHg6yNIGhNJZQ6TLiT9mORJJh7vhyUvmKDWiGQRjGFuVamemo4LzkUJMhqCN0uhRLVL1qixTko6xBg7NpmwtgcOi167bu7IV4pmx5lCFIONNfjUplYR-GhvlwCpNAfiMFH-qqkTWPXAjTEdhow_5gOdc6MsuK3A6EPP23pDP3WKLBQKMafUeyxQiiaT1QDpbcBw">
+</div>
+<div class="p-4 space-y-4">
+<div>
+<span class="bg-rarity-legendary text-black px-2 py-0.5 font-label-sm text-label-sm">LEGENDARY</span>
+<h3 class="font-headline-md text-headline-md mt-2 group-hover:text-rarity-legendary transition-colors">DORITOS</h3>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="monetization_on">monetization_on</span>
+<span class="font-label-sm text-label-sm text-on-surface">5,000</span>
+</div>
+<button class="clip-shard bg-rarity-epic px-6 py-2 text-on-primary font-label-sm text-label-sm beveled-shine hover:bg-white hover:text-black transition-all">ADD TO LOCKER</button>
+</div>
+</div>
+</div>
+<!-- Card 6 -->
+<div class="group relative bg-surface-container border-2 border-rarity-common shadow-[0_0_15px_rgba(152,141,159,0.2)] transition-all duration-300 hover:-translate-y-2 hover:shadow-[0_0_30px_rgba(152,141,159,0.4)]">
+<div class="absolute top-0 right-0 w-12 h-12 bg-rarity-common clip-path-[polygon(100%_0,100%_100%,0_0)] flex items-start justify-end p-1 z-20">
+<span class="text-on-surface font-label-sm text-[10px]">LV.1</span>
+</div>
+<div class="aspect-square relative overflow-hidden bg-gradient-to-br from-[#07070F] to-rarity-common/10 p-4">
+<img class="w-full h-full object-contain opacity-70" data-alt="A simple military utility pack in dark grey fabric. Practical buckles, velcro patches, rugged texture. Clean digital asset on dark navy floor, minimalist lighting, gaming HUD interface look." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBElqFLtAxd9qTGs8pvQciz7z4J7TSrlPl-emI8aSLL2CYaaqTBUvvwcjdzgm-FohFDUNhby5VPtxVt8OkZL1kG8p5qalL6R5NyiGGWbcvP57CVw6CFHEQfdl_rib57v3Bct9hZtWk6bewXh7YPDrgLq3aEM-GHspdtqT9lbEbEojIR-EJoLvLsaAU445yLFrxrZP4D1XHm10CBYvWmUhfoIUlAqq0P2awxbvHPneybkwaGsEGdxxBQaQ">
+</div>
+<div class="p-4 space-y-4">
+<div>
+<span class="bg-rarity-common text-black px-2 py-0.5 font-label-sm text-label-sm">COMMON</span>
+<h3 class="font-headline-md text-headline-md mt-2 group-hover:text-rarity-common transition-colors">LAYS</h3>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="monetization_on">monetization_on</span>
+<span class="font-label-sm text-label-sm text-on-surface">50</span>
+</div>
+<button class="clip-shard bg-rarity-epic px-6 py-2 text-on-primary font-label-sm text-label-sm beveled-shine hover:bg-white hover:text-black transition-all">ADD TO LOCKER</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation Shell -->
+<nav class="fixed bottom-0 w-full z-50 h-20 clip-bottom-nav bg-gradient-to-t from-surface-container-highest to-surface-container shadow-[0_-10px_30px_rgba(167,200,255,0.2)] flex justify-around items-end w-full px-4 pb-2">
+<a class="flex flex-col items-center justify-center text-outline dark:text-outline-variant px-4 py-2 hover:bg-surface-variant transition-colors group" href="#">
+<span class="material-symbols-outlined text-2xl group-hover:text-primary" data-icon="location_searching">location_searching</span>
+<span class="font-label-sm text-label-sm uppercase tracking-tighter">Drop Zone</span>
+</a>
+<a class="flex flex-col items-center justify-center text-secondary-container bg-secondary/10 rounded-xl px-6 py-2 border-t-4 border-secondary shadow-[0_0_15px_rgba(255,214,91,0.5)] translate-y-[-2px]" href="#">
+<span class="material-symbols-outlined text-2xl" data-icon="inventory_2" style="font-variation-settings: 'FILL' 1;">inventory_2</span>
+<span class="font-label-sm text-label-sm uppercase tracking-tighter">The Locker</span>
+</a>
+<a class="flex flex-col items-center justify-center text-outline dark:text-outline-variant px-4 py-2 hover:bg-surface-variant transition-colors group" href="#">
+<span class="material-symbols-outlined text-2xl group-hover:text-primary" data-icon="assignment">assignment</span>
+<span class="font-label-sm text-label-sm uppercase tracking-tighter">Mission</span>
+</a>
+<a class="flex flex-col items-center justify-center text-outline dark:text-outline-variant px-4 py-2 hover:bg-surface-variant transition-colors group" href="#">
+<span class="material-symbols-outlined text-2xl group-hover:text-primary" data-icon="shopping_bag">shopping_bag</span>
+<span class="font-label-sm text-label-sm uppercase tracking-tighter">Loadout</span>
+</a>
+</nav>
+<!-- Scanning Line Effect Layer -->
+<div class="fixed inset-0 pointer-events-none opacity-[0.03] z-[100]" style="background: linear-gradient(0deg, transparent 0%, #ddb7ff 50%, transparent 100%); background-size: 100% 4px; animation: scanline 10s linear infinite;"></div>
+<script>
+        // Micro-interaction for buttons
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('mousedown', () => {
+                btn.style.transform = 'scale(0.95)';
+            });
+            btn.addEventListener('mouseup', () => {
+                btn.style.transform = 'scale(1)';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.transform = 'scale(1)';
+            });
+        });
+
+        // Background Atmosphere Script
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes scanline {
+                0% { transform: translateY(-100%); }
+                100% { transform: translateY(100%); }
+            }
+        `;
+        document.head.append(style);
+    </script>
+
+
+</body></html>
