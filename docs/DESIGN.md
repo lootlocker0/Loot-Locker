@@ -387,6 +387,21 @@ margin); all four rarity badge combinations that use solid black text
    currently contains the phrase — flagging so whoever builds `/order/[id]`
    in a later phase doesn't lift it from the export folder.
 
+   **Status: still open, not resolved.** The manager proposed "To Victory
+   Royal" as the replacement copy. That doesn't actually clear the trademark
+   concern — it's the same two distinctive words in the same order with one
+   letter dropped and a word prepended, which is exactly the kind of minimal
+   edit that courts and brand-enforcement teams read as the same phrase for
+   trademark purposes (the legal test is overall commercial impression, not
+   character-for-character match). It also still reads, to a player who
+   recognizes the reference, as the exact same wink at Fortnite the original
+   text was. If the goal is genuinely severing the association per CLAUDE.md
+   invariant #7, this doesn't do it — "ORDER SECURED" / "EXTRACTION COMPLETE"
+   (or something else built from LootLockers' own vocabulary) still stands
+   as the actual fix. Whoever builds this screen should get an explicit
+   final call from the manager before writing either string into a
+   component.
+
 2. **Stripe/Visa/Mastercard logo images in the checkout mock** —
    `loot_drop_extraction_point/code.html`'s payment-method reveal panel
    embeds `<img alt="Visa">` / `<img alt="Mastercard">` raster images pulled
@@ -423,18 +438,32 @@ margin); all four rarity badge combinations that use solid black text
      real. This is the part that concerns me, not the product names
      themselves.
 
-   I'm not deciding this — it needs a call from whoever owns the product
-   catalog / legal review: (a) will the real catalog stock actual branded
-   snacks resold under their real names, and if so (b) should rarity-tier
-   gamification and invented stat copy be reserved for store-created
-   bundles/kits only, and kept off individual branded items (real product
-   card descriptions should stay factual — name, price, allergens, maybe a
-   plain one-line description — with the "rarity" badge perhaps still
-   applying as a store-assigned merchandising tier, but without the
-   "+50 Focus" style flavor text implying the brand itself granted some
-   power-up). CLAUDE.md invariant #7 ("No third-party IP in copy, assets, or
-   product names") reads as unqualified, which is part of why I'm surfacing
-   this rather than assuming either interpretation.
+   **Status: (a) resolved by the manager — yes, the real catalog stocks real
+   branded products, physically sourced (a Costco Doritos variety multibox,
+   Kool-Aid packets in specific colors, plus an assorted chip lineup).
+   (b) still open** — the manager hasn't ruled on whether invented
+   RPG stat copy ("+50 Focus") stays attached to these specific real
+   products or gets reserved for store-created bundles only. Real seed data
+   for (a) is landing in `prisma/seed.ts` (P1) using factual descriptions —
+   name, price, allergens — with no invented stat text, which is the
+   conservative reading of (b) until the manager says otherwise:
+   - **Doritos** (Costco 30-count variety multibox — [Frito-Lay Classic
+     Mix / Doritos Mix Variety Pack](https://www.costco.com/p/-/frito-lay-classic-mix-variety-pack-30-count/100383609)):
+     Nacho Cheese, Cool Ranch, Flamin' Hot Nacho, Spicy Nacho, Spicy Sweet
+     Chili.
+   - **Kool-Aid**, one flavor per requested color: Grape (purple), Cherry
+     (red), Blue Raspberry Lemonade (blue) — current, actively-sold
+     unsweetened drink-mix packet flavors, not a discontinued/novelty flavor
+     picked for the color alone.
+   - **Chips (assortment, unspecified brand mix):** Lay's Classic, Cheetos
+     Crunchy, Ruffles Original — a plain generic-but-real assortment
+     alongside the Doritos lineup, factual naming only, same treatment as
+     above.
+
+   CLAUDE.md invariant #7 ("No third-party IP in copy, assets, or product
+   names") is about invented copy wrapped around a trademark, not about
+   naming what's actually on the shelf — nominative use for products
+   genuinely being resold stays fine under that reading.
 
 ### Reviewed and fine — generic genre vocabulary, not a specific trademark
 
