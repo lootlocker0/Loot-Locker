@@ -1,69 +1,122 @@
-import Image from "next/image";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { db } from "@/lib/db";
+import { Nav } from "@/components/layout/Nav";
+import { Footer } from "@/components/layout/Footer";
+import { ProductGrid } from "@/components/ProductGrid";
 
-export default function Home() {
+// `/` sits outside the `(shop)` route group (frontend.md §6 wants it built at
+// the literal `app/page.tsx`), so it can't pick up `app/(shop)/layout.tsx`'s
+// Nav/Footer automatically — both are rendered directly here instead.
+export const metadata: Metadata = {
+  title: "LootLockers | Order ahead, skip the line",
+  description:
+    "School snack ordering with locker pickup. Browse The Locker, build your loadout, grab it between classes.",
+};
+
+// Refresh the drop strip periodically; stock moves during a lunch service,
+// but the home page isn't the safety-critical read path (that's /snacks).
+export const revalidate = 30;
+
+const STEPS = [
+  {
+    n: 1,
+    title: "Browse The Locker",
+    body: "Filter by rarity or category and see live stock and allergens on every card.",
+  },
+  {
+    n: 2,
+    title: "Build your loadout",
+    body: "Add snacks to your cart and pick a pickup window that fits your schedule.",
+  },
+  {
+    n: 3,
+    title: "Grab it at the locker",
+    body: "Show your code at pickup and you're back to class before the bell.",
+  },
+] as const;
+
+export default async function Home() {
+  const dropProducts = await db.product.findMany({
+    where: { active: true, stockQty: { gt: 0 } },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    take: 4,
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      priceCents: true,
+      category: true,
+      rarity: true,
+      allergens: true,
+      stockQty: true,
+      imageUrl: true,
+    },
+  });
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="flex min-h-full flex-col">
+      <Nav />
+      <main className="flex-1">
+        <section className="clip-hero border-b border-white/5 bg-surface-lowest px-4 py-20 text-center sm:px-8">
+          <p className="clip-shard-tight mx-auto mb-6 w-fit border-2 border-brand px-3 py-1 font-mono text-xs uppercase tracking-widest text-brand">
+            Season 01
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          <h1 className="mx-auto max-w-3xl text-display font-display uppercase leading-none text-text">
+            Snacks, <span className="text-gold">unlocked.</span>
+          </h1>
+          <p className="mx-auto mt-6 max-w-xl text-body-lg text-text-dim">
+            Order ahead from The Locker, build your loadout, and pick it up
+            between classes — no line, no cash fumbling, no missed lunch.
+          </p>
+          <Link
+            href="/snacks"
+            className="clip-shard mx-auto mt-8 inline-flex items-center justify-center bg-gold px-12 py-4 font-display text-lg uppercase tracking-wide text-void transition-transform hover:brightness-110 active:scale-[.97]"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+            Enter The Locker
+          </Link>
+        </section>
+
+        <section className="mx-auto max-w-6xl px-4 py-16 sm:px-8">
+          <div className="mb-8 flex items-baseline justify-between">
+            <h2 className="font-display text-headline-lg uppercase text-rarity-epic">
+              Today&rsquo;s Drop
+            </h2>
+            <Link
+              href="/snacks"
+              className="font-mono text-sm uppercase text-brand hover:underline"
+            >
+              See the full locker →
+            </Link>
+          </div>
+          <ProductGrid products={dropProducts} />
+        </section>
+
+        <section className="border-t border-white/5 bg-surface-2 px-4 py-16 sm:px-8">
+          <div className="mx-auto max-w-6xl">
+            <h2 className="text-center font-display text-headline-lg uppercase text-text">
+              Deployment Protocol
+            </h2>
+            <div className="mt-10 grid grid-cols-1 gap-8 md:grid-cols-3">
+              {STEPS.map((step) => (
+                <div key={step.n} className="flex flex-col items-center text-center">
+                  <span
+                    aria-hidden="true"
+                    className="clip-hex flex h-14 w-14 items-center justify-center bg-brand font-display text-xl text-void"
+                  >
+                    {step.n}
+                  </span>
+                  <h3 className="mt-4 font-display text-lg uppercase text-text">
+                    {step.title}
+                  </h3>
+                  <p className="mt-2 max-w-xs text-sm text-text-dim">{step.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
+      <Footer />
     </div>
   );
 }

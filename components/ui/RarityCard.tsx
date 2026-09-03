@@ -1,7 +1,7 @@
-import Image from "next/image";
 import type { Rarity, Allergen } from "@prisma/client";
 import { rarityMeta } from "@/lib/rarity";
 import { ShardButton } from "./ShardButton";
+import { ProductImage } from "./ProductImage";
 
 export function RarityCard({
   name, description, priceCents, imageUrl, rarity, allergens, stockQty, onAdd,
@@ -44,9 +44,10 @@ export function RarityCard({
       </span>
 
       <div className="aspect-square w-full overflow-hidden bg-surface-lowest">
-        <Image
+        <ProductImage
           src={imageUrl}
           alt=""
+          rarity={rarity}
           width={320}
           height={320}
           className="h-full w-full object-contain"
