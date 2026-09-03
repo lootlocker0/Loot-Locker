@@ -1229,7 +1229,7 @@ Whether Stripe permits confirming an automatic-payment-methods intent after a
 `payment_failed` cannot be established without a real account — that half stays
 open and belongs on the P5 live-transaction checklist.
 
-### 39. [human, escalation — CLAUDE.md §7] Unpaid holds make the daily cap ~unbounded even without the race
+### ~~39. [human, escalation — CLAUDE.md §7] Unpaid holds make the daily cap ~unbounded even without the race~~ RESOLVED
 
 Item 21 asked for this to be tested and put in front of a human. Four sequential
 1400c **card** checkouts for one email are all accepted (`PENDING` is excluded
@@ -1240,6 +1240,16 @@ leaves **5600c paid for one address against a 1500c cap — 3.7×**. Asserted in
 This is behaving as specified. It is also effectively a change to the spend cap,
 which CLAUDE.md §7 puts on the human escalation list, so the decision is: is the
 cap a limit on *committed* money (today's behaviour) or on *money in flight*?
+
+**Decision (human): keep as-is — committed money only.** `PENDING` stays
+excluded from the cap aggregate. No code change. The real-world exposure is
+bounded by how many card checkouts one student can plausibly start and pay
+inside the ~15-minute PENDING window, and counting PENDING would mean a
+student mid-checkout on one order could get `SPEND_CAP_EXCEEDED` on a second
+cart for money that was never actually charged — a worse everyday experience
+for a rare edge case. This is a separate question from item 31 (the
+*concurrent* race, which bypasses even the committed-money cap entirely and
+is being fixed, not accepted).
 
 ### 40. [manager — LOW/INFO] Rate limiting: what is actually true
 
