@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { testDb, resetDb } from "../setup/db";
 import {
+  chargeRefunded,
   checkoutPayload,
   paymentIntentFailed,
   paymentIntentSucceeded,
@@ -94,6 +95,52 @@ describe("expiry sweep", () => {
       expect(slot.bookedCount).toBe(0);
       expect(after.paidAt).toBeNull();
     }
+  });
+
+  /**
+   * NEW interaction created by the §33 fix, which nothing covered: since
+   * `onRefunded` now matches a PENDING order, a refund and the sweep can both
+   * be acting on one expiring order at the same instant.
+   *
+   * Both are conditional updates, so exactly one of two shapes is legal, and
+   * "released twice" (21 units of phantom stock, or a negative `booked_count`)
+   * is not one of them.
+   */
+  it("cannot release twice when a refund and the sweep race one expiring order", async () => {
+    const order = await seedPendingCardOrder({
+      totalCents: 500,
+      stockQty: 20,
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    const productId = order.items[0].productId;
+
+    await Promise.all([
+      runSweep(),
+      postWebhook(chargeRefunded(order.stripePaymentIntentId!, "evt_refund_vs_sweep")),
+    ]);
+
+    const after = await testDb.order.findUniqueOrThrow({ where: { id: order.id } });
+    const stock = await testDb.product.findUniqueOrThrow({ where: { id: productId } });
+    const slot = await testDb.pickupSlot.findUniqueOrThrow({ where: { id: order.slotId } });
+    console.log(
+      `[sweep vs refund] status=${after.status} stock=${stock.stockQty}/20 ` +
+        `bookedCount=${slot.bookedCount}`,
+    );
+
+    // The refund beats every status except REFUNDED, so it wins whichever order
+    // the two land in: either it flipped PENDING first (and the sweep then
+    // matched nothing), or the sweep expired it first and the refund overwrote
+    // EXPIRED.
+    expect(after.status).toBe("REFUNDED");
+    expect(after.expiresAt).toBeNull();
+
+    // Released exactly once, or not at all. Never twice.
+    expect([19, 20]).toContain(stock.stockQty);
+    expect([0, 1]).toContain(slot.bookedCount);
+    // And the two holds agree with each other — a released seat with held stock
+    // (or the reverse) would mean the release ran partially.
+    expect(slot.bookedCount).toBe(stock.stockQty === 20 ? 0 : 1);
+    expect(slot.bookedCount).toBeGreaterThanOrEqual(0);
   });
 
   /**
@@ -350,5 +397,105 @@ describe("expiry sweep", () => {
     expect(py.stockQty).toBe(400 - fresh);
     const slotAfter = await testDb.pickupSlot.findUniqueOrThrow({ where: { id: slot.id } });
     expect(slotAfter.bookedCount).toBe(fresh);
+  });
+
+  /**
+   * The same ABBA probe with the NEW lock in the cycle (HANDOFF §46).
+   *
+   * The checkout transaction's lock order is now mailbox (advisory) → slot →
+   * products ascending, and `lib/db/release.ts` takes slot → products ascending
+   * with no advisory lock at all. That is only safe while the advisory lock is
+   * taken FIRST: a change that took it after `book_slot` would put two orderings
+   * in the graph and deadlock against a release.
+   *
+   * The test above never contends the advisory lock — every request uses a
+   * distinct email. This one crosses every dimension at once: two mailboxes,
+   * two pickup windows, two products in reversed cart order, and concurrent
+   * releases on the same rows. A deadlock surfaces as a 500, not a coded 409.
+   */
+  it("does not deadlock when two mailboxes cross two windows and two products", async () => {
+    const slotA = await seedSlot({ capacity: 60 });
+    const slotB = await seedSlot({ capacity: 60 });
+    const x = await seedProduct({ stockQty: 400, priceCents: 1 });
+    const y = await seedProduct({ stockQty: 400, priceCents: 1 });
+    const emails = ["abba-a@school.ca", "abba-b@school.ca"];
+
+    // Card orders about to be released. PENDING is excluded from the cap
+    // aggregate, so these can share the same two mailboxes without the cap
+    // interfering with what this test is measuring.
+    const doomed = await Promise.all(
+      Array.from({ length: 16 }, (_, i) =>
+        postCheckout(
+          checkoutPayload({
+            slotId: i % 2 === 0 ? slotA.id : slotB.id,
+            email: emails[i % 2],
+            paymentMethod: "CARD",
+            items: [
+              { productId: x.id, qty: 1 },
+              { productId: y.id, qty: 1 },
+            ],
+          }),
+        ),
+      ),
+    );
+    expect(doomed.map((r) => r.status)).toEqual(Array(16).fill(200));
+    await testDb.order.updateMany({
+      where: { status: "PENDING" },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    // 40 fresh cash checkouts, cart order alternating, mailbox alternating,
+    // window alternating — every combination of the lock order in flight at
+    // once — plus two sweeps releasing the doomed orders underneath them.
+    const fresh = Array.from({ length: 40 }, (_, i) =>
+      postCheckout(
+        checkoutPayload({
+          slotId: i % 4 < 2 ? slotA.id : slotB.id,
+          email: emails[i % 2],
+          paymentMethod: "CASH_AT_PICKUP",
+          items:
+            i % 2 === 0
+              ? [
+                  { productId: x.id, qty: 1 },
+                  { productId: y.id, qty: 1 },
+                ]
+              : [
+                  { productId: y.id, qty: 1 },
+                  { productId: x.id, qty: 1 },
+                ],
+        }),
+      ),
+    );
+    const results = await Promise.all([runSweep(), runSweep(), ...fresh]);
+
+    const failures = results.filter((r) => r.status >= 500);
+    expect(
+      failures.map((f) => f.text.slice(0, 160)),
+      "500s here are an ABBA deadlock between the advisory lock and releaseOrder",
+    ).toEqual([]);
+
+    // Drain anything the sweeps raced past, then check the books.
+    await runSweep();
+    expect(await testDb.order.count({ where: { status: "PENDING" } })).toBe(0);
+
+    const reserved = await testDb.order.count({ where: { status: "RESERVED" } });
+    const [px, py] = await Promise.all([
+      testDb.product.findUniqueOrThrow({ where: { id: x.id } }),
+      testDb.product.findUniqueOrThrow({ where: { id: y.id } }),
+    ]);
+    console.log(
+      `[abba crossed mailboxes] reserved=${reserved}/40 500s=${failures.length} ` +
+        `stock=${px.stockQty}/${py.stockQty}`,
+    );
+    expect(px.stockQty).toBe(400 - reserved);
+    expect(py.stockQty).toBe(400 - reserved);
+
+    const [a, b] = await Promise.all([
+      testDb.pickupSlot.findUniqueOrThrow({ where: { id: slotA.id } }),
+      testDb.pickupSlot.findUniqueOrThrow({ where: { id: slotB.id } }),
+    ]);
+    expect(a.bookedCount + b.bookedCount).toBe(reserved);
+    expect(a.bookedCount).toBeLessThanOrEqual(a.capacity);
+    expect(b.bookedCount).toBeLessThanOrEqual(b.capacity);
   });
 });

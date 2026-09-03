@@ -1236,26 +1236,44 @@ Both dispatch paths are guarded by conditional updates (`onPaid`'s
 `WHERE status = 'PENDING'`, `releaseOrder`'s), so the second one no-ops rather
 than double-acting — but that is the seam to attack.
 
-**Residual 2 — RESOLVED (manager, 2026-09-03).** Closed with the move backend
-outlined: `claimWebhookEvent` now returns a third outcome, `"ambiguous"`, for a
-claim that is unfinished and older than `WEBHOOK_CLAIM_TRUST_MS` (10s) but not
-yet past `WEBHOOK_CLAIM_STALE_MS` (3min). The route answers that with **409**
-("claim ambiguous, retry"), never 200 — so Stripe is never told an event is
-handled while there is real doubt, and a delivery killed mid-handler is now
-recovered by whichever Stripe retry first lands after the claim ages past
-either boundary: a same-second retry gets 409 and tries again later; a retry
-that arrives once the claim is genuinely stale (past 3 minutes) reclaims and
-actually processes it.
+**Residual 2 — NARROWED, not eliminated (manager, 2026-09-03; corrected
+2026-09-03 after qa's re-run caught this paragraph misdescribing its own fix —
+see §49).** Closed *most* of the gap with the move backend outlined:
+`claimWebhookEvent` now returns a third outcome, `"ambiguous"`, for a claim
+that is unfinished and has aged past `WEBHOOK_CLAIM_TRUST_MS` (10s) but not
+yet past `WEBHOOK_CLAIM_STALE_MS` (3min). The route answers that band with
+**409** ("claim ambiguous, retry"), never 200 — so Stripe is never told an
+event is handled while there is real doubt in that band.
 
-The trust window (10s) is intentionally short: this handler's real dispatch
-finishes in milliseconds, so genuinely concurrent duplicate deliveries — the
-case the original in-flight branch existed to protect — are comfortably inside
-it, while a claim that is *seconds* old and still unfinished is already
-behaving unlike a healthy request. qa's "three simultaneous deliveries → one
-`ok`, two `already processed`" case is unaffected (all three arrive within
-milliseconds); a test that deliberately delays a duplicate delivery past 10s
-would now correctly see 409 instead of 200, and should assert that rather than
-mock it as the old behavior.
+**What this paragraph got wrong the first time:** it isn't true that "a
+same-second retry gets 409." A claim younger than `WEBHOOK_CLAIM_TRUST_MS`
+(10s) — same-second absolutely included — is still trusted with a plain
+**200** `already processed`, exactly as before this fix. That trust band is
+what keeps genuinely concurrent duplicate delivery idempotent without relying
+on timing luck (real dispatch finishes in low milliseconds, so 10s is a wide,
+safe margin for that), but it means the original §32 failure is *narrowed*,
+not closed: a handler killed at t=0 whose first Stripe retry lands before
+t=10s is still told "handled" and that payment is still lost — worse, per
+qa's test, the order is left `PENDING` with a live `expiresAt`, so the sweep
+later hands its stock back too. §49 has the pinned test proving this exact
+behavior on purpose so it stays visible.
+
+**Accepted as a proportionate residual, not fixed further right now.**
+Eliminating the trust band entirely (answer 409 for *any* unfinished claim,
+regardless of age) would close this completely, but real dispatch latency is
+not literally zero — under load, a legitimate concurrent duplicate's "loser"
+could occasionally check the claim before the "winner" finishes and get a
+409 instead of the deterministic 200 qa's concurrent-triple-replay test
+currently asserts, trading a rare-but-real recovery gap for an
+occasionally-flaky correctness test. Given qa rated this LOW severity, it
+needs both a genuine process crash *and* a retry landing inside a 10-second
+window (Stripe's real webhook retry cadence is not sub-second), and it is now
+honestly documented and pinned by a test rather than silently assumed away —
+this is being accepted the same way this project has accepted other narrow,
+low-probability distributed-systems edges (the DST transition window in
+`lib/timezone.ts`, the deactivate-mid-checkout race in HANDOFF §7). Revisit if
+real-world webhook volume or Stripe's retry behavior ever makes this a
+plausible, not just theoretical, path to a lost payment.
 
 `npx tsc --noEmit` and full `npx eslint .` re-verified clean after the change.
 
@@ -1657,3 +1675,313 @@ Everything else: 75 passed, 0 regressions, plus 25 unit and 5 rate-limit.
   `booked_count` are untouched in every one of them. A refunded order still
   permanently consumes its pickup seat (item 21) — unchanged, and now reachable
   from more statuses than before.
+
+---
+
+## P3 step 4 — qa (re-run and extension after the three fixes) · 2026-09-03
+
+### 47. [manager — THE P3 GATE VERDICT] Suite is fully green, no markers standing in for unfixed bugs
+
+Numbers, three consecutive runs, no flakes:
+
+```
+QA_NO_SERVER=1 npx vitest run tests/unit        25 passed  (4 files)
+npx vitest run tests/concurrency tests/api     106 passed  (9 files)
+QA_RATE_LIMIT=on npx vitest run tests/ratelimit  5 passed  (1 file)
+npx tsc --noEmit                                 clean
+npx eslint .                                     clean
+```
+
+`106 passed | 0 failed | 0 skipped | 0 it.fails | 0 expected-fail`. Grep for
+`it.fails`, `it.skip`, `describe.skip`, `todo` across `tests/**` returns only
+comments describing markers that were removed. **Nothing in this suite is a
+placeholder for an unfixed bug any more.**
+
+Per file (before → after):
+
+| File | Before | After |
+|---|---|---|
+| `tests/concurrency/slot.test.ts` | 4 | 4 |
+| `tests/concurrency/stock.test.ts` | 6 | 6 |
+| `tests/concurrency/spendcap.test.ts` | 6 (1 `it.fails`) | 10 |
+| `tests/concurrency/sweep.test.ts` | 8 | 10 |
+| `tests/concurrency/webhook.test.ts` | 14 (2 `it.fails`) | 22 |
+| `tests/concurrency/webhook-claim.test.ts` | — | 14 (new file) |
+| `tests/api/*` | 40 | 40 |
+
+Baseline before any edit, for the record — the two markers flipped exactly as
+§45 predicted and the third did not:
+
+```
+Tests  2 failed | 75 passed | 1 expected fail (78)
+FAIL  spendcap > KNOWN BUG: the cap is bypassed entirely by concurrent checkouts
+FAIL  webhook  > KNOWN BUG: charge.refunded before payment_intent.succeeded leaves the order PAID
+      (both: "Expect test to fail")
+[spend-cap race] accepted=5 capped=1 committedCents=1500 capCents=1500
+[out-of-order events] refunded-then-succeeded left status=REFUNDED paidAt=false
+```
+
+Nothing in `app/**`, `lib/**`, `prisma/**`, `components/**` or `stores/**` was
+touched. Changes are `tests/concurrency/*`, the new
+`tests/concurrency/webhook-claim.test.ts`, and one harness fix in
+`tests/setup/server.ts` (item 51). CI needed no change: `.github/workflows/ci.yml`
+runs `npx vitest run tests/concurrency`, which picks the new file up by glob.
+
+**From qa's side, P3 is passable.** Four things below are worth reading before
+frontend starts on `/checkout` — none of them blocks it, and one is a doc
+correction rather than a code defect.
+
+### 48. [manager] What was converted, and what was added
+
+**Converted (2 markers, both now normal `it` with stronger assertions):**
+
+- §31 `spendcap.test.ts` — "KNOWN BUG: the cap is bypassed entirely by
+  concurrent checkouts" → **"holds the cap under six concurrent checkouts for
+  one address"**. The old assertion was only `committed <= cap`; it now asserts
+  the exact split (`accepted=5, capped=1, committed=1500`) and that no request
+  degraded to a 500.
+- §33 `webhook.test.ts` — "KNOWN BUG: charge.refunded before
+  payment_intent.succeeded leaves the order PAID" → **"ends REFUNDED when
+  charge.refunded arrives before payment_intent.succeeded"**. Also asserts the
+  intermediate state (`REFUNDED` with `expiresAt` cleared), `paidAt` staying
+  null, one `order_refunded_before_payment` line, and zero `order_paid` /
+  zero notifications from the late succeeded event.
+
+**§32's marker, per that item's own note, was split rather than converted:**
+
+- **"trusts a seconds-old unfinished claim and leaves the order alone"** — the
+  original fixture, `createdAt` untouched, now asserting what it always
+  actually did (200 `already processed`, order still `PENDING`, claim not
+  stolen). This is verification row D and it is the property that protects
+  concurrent delivery.
+- **"reclaims a claim abandoned by a crashed handler and records the payment"** —
+  the same fixture backdated ten minutes. This is the real §32 fix, end to end:
+  `200 "ok"`, order `PAID`, `paidAt` set, `expiresAt` cleared, one
+  `webhook_claim_reclaimed`, one notification, and the next retry back to an
+  ordinary `already processed` replay.
+
+**Added — spend cap (`spendcap.test.ts`, +4):**
+
+- **"admits exactly three of twenty concurrent 400c checkouts against a 1500c
+  cap"** — §46's "exactly, not approximately". 20 × 400c against 1500c has one
+  arithmetically forced answer whatever order the lock grants in, so this is an
+  equality assertion (`accepted=3, capped=17, committed=1200`), not a bound.
+- **"serialises one mailbox only: other students never wait on it"** — the
+  lock's *scope*, proved structurally rather than by wall clock. A separate
+  session takes the exact key the route derives
+  (`<lowercased email>:<school day ISO>`) and holds it; while it is held a
+  checkout for that mailbox cannot make progress and twelve other mailboxes all
+  commit anyway (`accepted=12/12 in ~200ms, victimSettled=false`), then
+  releasing lets the blocked one through. This is the manager's measurement
+  from §31, now committed as a test.
+- **"cannot be raced by spelling the same address eight different ways"** —
+  adversarial. Eight concurrent 300c checkouts writing one address eight ways
+  (case, leading/trailing whitespace, tab) across two pickup windows. If the
+  lock key were ever derived before `checkoutSchema`'s `.trim().toLowerCase()`,
+  §31's race would reopen to anyone who can hold shift. `accepted=5,
+  committed=1500, total orders=5` — one bucket, one lock.
+- **"queues rather than fails when 60 checkouts hit one mailbox at once"** —
+  §46's availability half: strictly-serial mailbox must queue, not 500.
+
+**Added — webhook claim bands (`webhook-claim.test.ts`, new, 14):** covered in
+item 49.
+
+**Added — refunds (`webhook.test.ts`, +6):**
+
+- **"does NOT release stock or the seat when a refund lands on a PENDING
+  order"** — the resource-holding behaviour the manager checked by hand, now a
+  named test: `REFUNDED`, stock still 19/20, `booked_count` still 1, and a
+  subsequent sweep changes none of it (the refund cleared `expiresAt`, so the
+  order is out of the sweep's reach permanently). Intentional per §33, but it is
+  a real leak only `/admin` can undo, so it is asserted rather than assumed.
+- **`it.each` over `RESERVED`, `PACKED`, `PICKED_UP`, `CANCELLED`, `EXPIRED`**
+  (§46's request) — each ends `REFUNDED` with `expiresAt` cleared, stock and
+  `booked_count` unmoved, and a second refund event for the same charge is a
+  no-op.
+- **"overwrites an already-released CANCELLED order with REFUNDED, stock still
+  released"** — see item 50.
+
+**Added — cross-lock deadlock and sweep races (`sweep.test.ts`, +2):**
+
+- **"does not deadlock when two mailboxes cross two windows and two products"** —
+  §46's ABBA ask. The existing ABBA test never contends the advisory lock (every
+  request uses a distinct email). This one crosses every dimension at once — two
+  mailboxes, two windows, two products in reversed cart order, 40 fresh
+  checkouts against 2 sweeps and 16 releases on the same rows. `reserved=40/40,
+  500s=0, stock=360/360`, seats equal to orders. A change that ever took the
+  advisory lock after `book_slot` would fail here.
+- **"cannot release twice when a refund and the sweep race one expiring
+  order"** — a new interaction created by §33, since `onRefunded` now matches
+  `PENDING`. End state is always `REFUNDED`; stock released exactly once or not
+  at all (never 21/20), and the seat and the stock always agree with each other.
+
+### 49. [qa] The three-band claim, attacked — `tests/concurrency/webhook-claim.test.ts`
+
+New file, 14 tests, all against logic no test had touched before. Everything
+here plants the row a crashed handler leaves behind and backdates `createdAt`
+into a specific band, because the clock is the only input the branch has.
+
+- **409 middle band (new coverage, as asked):** a 30-second-old unfinished claim
+  → `409 "claim ambiguous, retry"`, order untouched (`PENDING`, `paidAt` null,
+  `expiresAt` unchanged), no notification, stock unmoved, one
+  `webhook_claim_ambiguous` line — **and the claim row's `createdAt` is
+  unchanged**, which is load-bearing: bumping it on a 409 would reset the
+  staleness clock on every retry and the row could never age into the reclaim
+  window, i.e. an infinite 409 loop for a payment that is already lost.
+- **All three bands in one table** (`TRUST_MS/5` → 200 `already processed`;
+  `TRUST_MS*3` and `STALE_MS-80s` → 409; `STALE_MS+7min` → 200 `ok` and `PAID`),
+  written against the constants so a change to either one fails here first. Ages
+  are deliberately far from the boundaries — a fixture planted at 9.9s would be
+  a clock-skew flake, not a test.
+- **The Residual-2 story end to end:** crash → retry lands in the ambiguous band
+  → 409, nothing happens → the claim ages past three minutes → next retry
+  reclaims and pays. `first=409 second=200 "ok"`, one `order_paid`.
+- **Ambiguity resolving the other way:** once the original (slow, not dead)
+  claim marks itself finished, the retry that was getting 409 gets a plain
+  `already processed` — not a reclaim, not a second dispatch.
+- **Reclaim race, proved not assumed:** five simultaneous deliveries against one
+  stale claim → exactly one `ok`, four `already processed`, one
+  `webhook_claim_reclaimed`, one `order_paid`, one notification, one
+  `webhook_events` row with `processedAt` set, order `PAID`. Five and not two,
+  because a two-way race can be won by luck.
+- **Residual 1 (a hung handler double-dispatched):** the work applied, the claim
+  left unfinished and aged out, event redelivered → it genuinely reclaims and
+  dispatches a second time, and the conditional updates make it a no-op — same
+  `paidAt`, one notification, one `order_paid`, one `webhook_noop`, stock
+  unchanged.
+- **The expensive double dispatch:** the same thing for
+  `payment_intent.payment_failed`, whose handler *releases* stock and the seat.
+  A second dispatch would create phantom inventory that oversells at the locker.
+  Stock stays 20/20 (not 21) and `booked_count` stays 0 (not negative).
+- **The bands are a property of the claim, not the event type:**
+  `charge.refunded` against an ambiguous claim is also held at 409 and the order
+  is not refunded.
+- **409 is unreachable for an unclaimed event id** (a first delivery must never
+  enter a retry loop).
+
+**Re-verified explicitly, not assumed unaffected:** the pre-existing
+"handles concurrent delivery of the same event" test now also asserts *zero*
+409s, exactly two `already processed`, and **zero `webhook_claim_ambiguous` log
+lines for that event id**. Genuinely simultaneous duplicates land inside the 10s
+trust window; a regression that shortened it would turn Stripe's normal
+duplicate delivery into a retry storm, and that would now fail here rather than
+pass quietly.
+
+### 50. [backend/manager — LOW, new] Four things the new logic does that are worth knowing
+
+None of these blocks P3. Each has a named test pinning the current behaviour, so
+if any of them is judged wrong later, the test is the place to change it.
+
+**(a) `docs/HANDOFF.md` §32 "Residual 2" describes the trust band incorrectly,
+and the behaviour it describes would be the safer one.** The resolution text
+says "a same-second retry gets 409 and tries again later". It does not: a retry
+inside `WEBHOOK_CLAIM_TRUST_MS` is answered `200 "already processed"` — the
+`existing.createdAt >= trustBefore` branch, which is exactly the branch that
+keeps concurrent duplicate delivery idempotent, so it is not a bug in the code.
+`docs/API-CONTRACT.md` documents it correctly; only the HANDOFF prose is wrong.
+
+Why it is worth a line anyway: a 2xx is Stripe's signal that an event was
+delivered and it stops retrying that event. So a handler killed at t=0 whose
+only retry lands at t < 10s still loses that payment permanently — §32's
+original failure, narrowed from "forever" to a ten-second window. Minimal
+reproduction (`webhook-claim.test.ts`, "still answers 200 to a retry inside the
+trust window, leaving that payment unrecorded"):
+
+```ts
+await testDb.webhookEvent.create({                     // what a killed handler leaves
+  data: { id: "evt_fast_retry", type: "payment_intent.succeeded",
+          createdAt: new Date(Date.now() - 1_000) },
+});
+const r = await postWebhook(paymentIntentSucceeded(pi, 500, "evt_fast_retry"));
+// r.status === 200, r.text === "already processed"
+// order stays PENDING, paidAt null, expiresAt still set → the sweep will
+// hand the stock back for a payment that was taken.
+```
+
+**Severity: low.** Stripe's first retry is minutes away, not seconds, so
+reaching this needs a duplicate delivery or a dashboard resend landing in the
+same ten seconds as a crash. Fixing it properly is not a smaller trust window
+(that breaks concurrent delivery) but distinguishing "another request is alive"
+from "a row exists" — a liveness signal rather than a timestamp, which is a
+design decision, not a test change. **Recommend: correct the §32 prose either
+way, so nobody later reads the doc and believes this window is closed.**
+
+**(b) The bands trust an unvalidated timestamp, so clock skew re-opens §32 for
+the duration of the skew.** A claim stamped in the future is inside every
+window forever: it can never age into the ambiguous band, let alone the reclaim
+band. Test: "trusts a claim timestamped in the future, so clock skew re-opens
+the crash window" — a claim five minutes ahead is answered `already processed`
+and never reclaimed. Not reproducible on a single host except by planting the
+row, which is what the test does. **Severity: low/informational**, and it is a
+deployment property (instance clocks, and `created_at`'s `DEFAULT
+CURRENT_TIMESTAMP` vs the app-generated `new Date()` a reclaim writes) rather
+than a defect. Worth knowing before anyone widens the reliance on these
+timestamps in P4.
+
+**(c) `CANCELLED`/`EXPIRED` → `REFUNDED` erases the fact that stock was already
+returned — a P4 hazard, not a bug.** The widened match means a declined order
+that already released its stock and seat gets overwritten with `REFUNDED`, and
+nothing in the row records that the release happened. The rule staff are given
+is "a refund does not restock; adjust inventory by hand" — applied to this row,
+by hand, it restocks a second time and oversells. Test: "overwrites an
+already-released CANCELLED order with REFUNDED, stock still released"
+(`status=REFUNDED stock=20/20 (already released by the decline)`).
+**For P4:** the admin refund screen needs to distinguish "refunded, stock still
+held" (the `PENDING`/`PAID` path) from "refunded, stock already returned" (the
+`CANCELLED`/`EXPIRED` path) before it tells anyone to adjust inventory.
+
+**(d) The per-mailbox lock queue, measured — §46's prediction is real but far
+out of reach.** Single mailbox, all-cash, full transactions (1c items so nothing
+short-circuits on the cap):
+
+| Concurrent, one mailbox | Result |
+|---|---|
+| 40 | 40 × 200, 1.0 s |
+| 80 | 80 × 200, 1.4 s |
+| 150 | 150 × 200, 2.4 s |
+| 500 | 500 × 200, 7.6 s |
+| **800** | **711 × 200, 89 × 500 (11.1 %), 13.1 s** |
+
+The books were exact at every level (`committed` equal to `accepted`, seats
+equal to orders). So serialising a mailbox costs ~16 ms per queued checkout and
+the degradation is the same `maxWait`/`timeout` → bare `INTERNAL` 500 as item
+36, arriving at a similar concurrency (800) despite the added serialisation —
+availability, not correctness, and roughly 800× one student's plausible burst.
+The committed regression test is pinned at 60, well clear of the ceiling; the
+800-way probe is not committed, for the same reason item 36 gives.
+
+### 51. [manager] One harness fix, in qa-owned code
+
+`tests/setup/server.ts` now probes the port before spawning. A run that is
+killed rather than finished (a `| head` closing the pipe, a cancelled CI job,
+^C) never reaches `stopServer`, and the detached `next dev` survives holding
+3111; the next run then spawned a server that died instantly with `EADDRINUSE` and
+sat out the full ready-timeout before reporting anything useful. It now fails in
+two seconds with the `pkill` command to run. This cost real time during this
+pass. No product code involved.
+
+### 52. [qa] Tried and found nothing — stated plainly so "green" means something
+
+- **Spend cap vs. the webhook path.** The advisory lock is taken only by
+  `POST /api/checkout`, so a `payment_intent.succeeded` committing a `PAID`
+  order for the same mailbox is not serialised against an in-flight cash
+  checkout. Chased, and it is not a new hole: it is item 39's accepted design
+  (PENDING is excluded from the aggregate, so paid card holds already exceed the
+  cap without any race — the existing test "does not count PENDING card orders,
+  so four 1400c holds can all be paid" asserts 5600c paid against a 1500c cap).
+  No test was added, because a race that can only be observed by timing would be
+  a flake, and the deterministic version of the same statement is already there.
+- **Advisory-lock hash collisions.** `hashtextextended` is 64-bit; two colliding
+  mailboxes would serialise against each other but the cap itself is checked by
+  `email` equality, so a collision costs latency and never money. Not tested.
+- **Reclaim losers taking the 409 path.** Whichever way a loser's read
+  interleaves (before or after the winner bumps `createdAt`), it answers 200 —
+  observed 5/5 across repeated runs. The assertion permits 200 or 409 so that a
+  legitimate interleaving cannot flake the suite; the printed line records what
+  actually happened.
+- **Flakiness.** `tests/concurrency` + `tests/api` run three consecutive times:
+  106/106 each time. The two timing-shaped new tests (lock scope, 60-way queue)
+  were run repeatedly on their own as well.
+- **Not covered, unchanged from item 44:** no E2E, no bundle secret grep, no
+  real Stripe account, no multi-instance deployment. The sweep's behaviour under
+  two *processes* (as opposed to two concurrent requests) is still untested.

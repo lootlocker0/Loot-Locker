@@ -48,7 +48,33 @@ async function waitForReady(timeoutMs = 180_000): Promise<void> {
   );
 }
 
+/**
+ * A run that is killed rather than finished (SIGPIPE from a `| head`, a
+ * cancelled CI job, ^C) never reaches `stopServer`, and the detached `next dev`
+ * survives holding port 3111. The next run then spawns a server that dies with
+ * EADDRINUSE and waits out the full ready-timeout before saying anything
+ * useful. Checking first turns three minutes of silence into one line.
+ */
+async function assertPortFree(): Promise<void> {
+  try {
+    const r = await fetch(`${BASE_URL}/api/products`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    throw new Error(
+      `Something is already listening on ${BASE_URL} (responded ${r.status}). ` +
+        `A previous run's \`next dev\` was probably orphaned — a killed run never ` +
+        `reaches stopServer. Kill it before re-running:\n` +
+        `  pkill -f "next dev --port ${TEST_PORT}"`,
+    );
+  } catch (e) {
+    // Anything that is NOT our own message means nothing answered, which is
+    // what we want.
+    if (e instanceof Error && e.message.startsWith("Something is already")) throw e;
+  }
+}
+
 export async function startServer(): Promise<void> {
+  await assertPortFree();
   writeFileSync(SERVER_LOG_PATH, "");
 
   // `detached` puts the server in its own process group. `npx` forks the real
