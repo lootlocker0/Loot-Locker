@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { errorResponse } from "@/lib/errors";
+import { serviceDateFloorForToday } from "@/lib/timezone";
 
 export const runtime = "nodejs";
 
@@ -10,14 +11,18 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    // Server-local midnight. Vercel runs UTC and the school is in
-    // America/Vancouver, so between 00:00 and 07:00 UTC this "today" is already
-    // the school's tomorrow and that evening's remaining windows drop off the
-    // list. Harmless for a lunch service (it is after 5pm locally by then) but
-    // it is the same latent bug as the cutoff arithmetic — docs/HANDOFF.md §3,
-    // fix scoped to P3 along with lib/timezone.ts.
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // FIXED IN P3 (docs/HANDOFF.md §3, §13). This used to be `new Date()` with
+    // `setHours(0,0,0,0)` — server-local midnight, i.e. UTC on Vercel, so
+    // between 00:00 and 07:00 UTC the server's "today" was already the school's
+    // tomorrow and that evening's windows dropped off the list early.
+    //
+    // `serviceDateFloorForToday` returns the school's current calendar day as
+    // midnight UTC, which is the convention `serviceDate` is stored in — a date
+    // key compared against a date key. Note it is deliberately NOT the real
+    // instant of Vancouver midnight (07:00Z); comparing that against a
+    // `2026-09-03T00:00:00.000Z` service date would hide the current day's slots
+    // every morning.
+    const today = serviceDateFloorForToday();
 
     const slots = await db.pickupSlot.findMany({
       where: { active: true, serviceDate: { gte: today } },

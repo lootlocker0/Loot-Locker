@@ -11,9 +11,12 @@ not stub it.
 **Rule for backend:** an endpoint ships to `main` and to this file in the same
 commit. No exceptions, including "temporary" internal routes.
 
-**Status:** P2 (catalog reads) complete. `GET /api/products` and `GET /api/slots`
-are live and documented in §6. Everything else in the §6 table is still planned
-and must not be called. The sections below define the conventions every endpoint
+**Status:** P3 step 1 (checkout, Stripe webhook, expiry sweep) complete.
+`GET /api/products`, `GET /api/slots`, `POST /api/checkout`,
+`POST /api/webhooks/stripe` and `GET /api/cron/sweep` are live and documented in
+§6. `GET /api/orders/[orderNumber]` is **not** shipped — the confirmation page
+is blocked on it (`docs/HANDOFF.md` §22). Everything else in the §6 table is
+still planned and must not be called. The sections below define the conventions every endpoint
 follows, plus the data types and enum values fixed by the database. Later phases
 append to §6 without restructuring anything above it.
 
@@ -426,16 +429,236 @@ and again after any `SLOT_FULL` response.
 
 ---
 
+### `POST /api/checkout`
+
+Turns a cart into an order. Validates, reprices from the database, checks the
+daily cap and the ordering cutoff, atomically claims a seat in the pickup window
+and the stock for every line, creates the order, and — for card orders — opens a
+Stripe PaymentIntent.
+
+**Request** — JSON body. No auth.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `studentName` | string | yes | Trimmed. 2–80 chars |
+| `email` | string | yes | Trimmed and **lower-cased server-side** before anything uses it. Max 160. Must be a valid address |
+| `phone` | string | yes | Trimmed. `^\+?[\d\s()-]{10,20}$` — digits, spaces, brackets, dashes, optional leading `+` |
+| `homeroom` | string | no | Trimmed. Max 20 |
+| `slotId` | cuid | yes | From `GET /api/slots` |
+| `paymentMethod` | `CARD` \| `CASH_AT_PICKUP` | yes | Both are live |
+| `items` | array | yes | 1–20 lines |
+| `items[].productId` | cuid | yes | From `GET /api/products` |
+| `items[].qty` | int | yes | 1–10 per line |
+| `clientTotalCents` | int | no | Reconciliation only. See below |
+
+```jsonc
+{
+  "studentName": "Cash Tester",
+  "email": "cash.tester@example.com",
+  "phone": "(604) 555-0134",
+  "homeroom": "9B",
+  "slotId": "cmtkqayye000q5p7dxg1ygklo",
+  "paymentMethod": "CASH_AT_PICKUP",
+  "items": [
+    { "productId": "cmtkqayvk00005p7dl2izvtyt", "qty": 2 },
+    { "productId": "cmtkqayy1000k5p7dqcdtzx0i", "qty": 1 }
+  ],
+  "clientTotalCents": 475
+}
+```
+
+**Two cart lines for the same `productId` are a 400**, not a merge. A duplicate
+means the client cart is corrupt and we would rather hear about it than quietly
+guess the intent. De-duplicate in the cart store, not here.
+
+`clientTotalCents` is **evidence, not input**. The server reprices every line
+from the database, applies `tax_rate_bps`, and charges its own figure. If the
+two disagree the server logs `total_mismatch` and proceeds at the server price —
+it does not fail the order, because a staff reprice while a cart was open is a
+legitimate race. Render the `totalCents` from the response, not your own, before
+sending anyone to a payment form.
+
+**Response 200 — cash**
+
+```json
+{
+  "orderNumber": "LL-38759",
+  "pickupCode": "7GKA",
+  "totalCents": 475,
+  "requiresPayment": false
+}
+```
+
+The order is `RESERVED` immediately. There is nothing else to do; show the
+pickup code.
+
+**Response 200 — card**
+
+```json
+{
+  "orderNumber": "LL-56477",
+  "totalCents": 400,
+  "requiresPayment": true,
+  "clientSecret": "pi_3SxK2mABCD1234_secret_9f4b5ed415c4f630f65bacf5"
+}
+```
+
+Branch on `requiresPayment`, never on the presence of a field.
+
+**There is no `pickupCode` in the card response, and that is deliberate.** A
+card order is `PENDING` until Stripe confirms payment. Handing over the locker
+code first would let a student present a code for an order that then expired
+unpaid. The code becomes available on the confirmation page once the order is
+`PAID`.
+
+Confirm the `clientSecret` with Stripe Elements. **A client-side
+`status === "succeeded"` never means the order is paid** — only the webhook
+writes `PAID` (CLAUDE.md §2.3). After a successful confirmation, poll the order
+until its status flips.
+
+**Errors**
+
+| `code` | HTTP | Cause | Client action |
+|---|---|---|---|
+| `INVALID_INPUT` | 400 | Any field failed validation, a duplicate cart line, or a body that is not JSON. `fields` maps field name → messages (`_body` for an unparseable body) | Highlight the fields. Do not retry unchanged |
+| `RATE_LIMITED` | 429 | More than 10 attempts/min from one IP, or 5/min for one email | Wait, then allow one retry. Do not auto-retry in a loop |
+| `PRODUCT_UNAVAILABLE` | 409 | A `productId` does not exist or the product was deactivated | Refetch the catalog and rebuild the cart |
+| `SPEND_CAP_EXCEEDED` | 409 | This order would push the address past the daily cap. `capCents`, `spentCents` | Terminal for today. Show both numbers |
+| `SLOT_FULL` | 409 | The window filled, was deactivated, or does not exist | Refetch `GET /api/slots` and pick again. **Recoverable** |
+| `PAST_CUTOFF` | 409 | Now is later than `slotStart - order_cutoff_minutes` | Refetch slots; that window is closed. Another may not be |
+| `OUT_OF_STOCK` | 409 | A line could not be reserved. `productName` names it | Refetch the catalog, drop or reduce that line. **Recoverable** |
+| `INTERNAL` | 500 | Database or payment provider failure | Retry **once**. Nothing was charged |
+
+A missing, deactivated, or non-existent slot all return `SLOT_FULL` rather than
+a 404. The student's next move is identical in every case, and not
+distinguishing them means id-probing tells a scraper nothing.
+
+**Caching** — `Cache-Control: no-store`, route is `force-dynamic`.
+
+**Notes**
+
+- **Nothing partial is ever left behind.** The seat and every line's stock are
+  claimed inside one transaction. If line three is sold out, the seat and lines
+  one and two are rolled back with it — verified: a two-line cart whose second
+  line was sold out left `booked_count` and the first product's `stock_qty`
+  byte-identical.
+- **Stock is held before payment, not after.** A card order holds its stock and
+  its seat for `pending_order_ttl_minutes` (default 15) and the sweep gives them
+  back if payment never lands. This is a deliberate trade: an abandoned cart
+  briefly hiding a snack is cheaper than charging a student for a snack that is
+  not on the shelf.
+- **`SLOT_FULL` and `OUT_OF_STOCK` are normal, not exceptional.** Under load
+  they are the *expected* answer for everyone but the winner. Verified: 20
+  simultaneous checkouts against a capacity-1 window produced exactly one 200
+  and nineteen 409s, `booked_count = 1`, and stock down by exactly one unit.
+  Design the UI around them; do not try to prevent them by polling capacity.
+- **The cutoff is the school's clock, not the server's.** `America/Vancouver`,
+  pinned in `lib/timezone.ts`. Do not compute a cutoff on the client by
+  combining `serviceDate` and `startTime` — you will get a different answer than
+  the server in every timezone but one.
+- **No confirmation email is sent.** Delivery is not built (`lib/email.ts`, and
+  `docs/HANDOFF.md`). Do not tell a student to check their inbox. The
+  confirmation screen is the receipt.
+- Rate limits are per IP (10/min) and per hashed email (5/min).
+
+---
+
+### `POST /api/webhooks/stripe`
+
+Stripe's callback. **The only writer of `PAID`** (CLAUDE.md §2.3). Not for
+client use — it is documented here because qa drives it and because frontend
+must understand that this, and not Stripe.js, is what confirms an order.
+
+**Request** — the raw Stripe event body, with a `stripe-signature` header.
+Verified against `STRIPE_WEBHOOK_SECRET`. The body is read with `req.text()`
+and never re-serialised; anything that mutates the bytes breaks the signature.
+
+Handled event types:
+
+| Event | Effect |
+|---|---|
+| `payment_intent.succeeded` | `PENDING` → `PAID`, sets `paidAt`, clears `expiresAt` |
+| `payment_intent.payment_failed` | `PENDING` → `CANCELLED`, releases the stock and the seat |
+| `payment_intent.canceled` | Same as above |
+| `charge.refunded` | `PAID`/`PACKED` → `REFUNDED`. **Does not** return stock or the slot seat |
+
+Anything else is logged as `webhook_unhandled` and 200s.
+
+**Responses**
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `ok` | Processed, or intentionally a no-op |
+| 200 | `already processed` | Replay. The event id was already recorded |
+| 400 | `missing signature` | No `stripe-signature` header |
+| 400 | `bad signature` | Signature did not verify. Nothing was recorded |
+| 500 | `webhook not configured` | `STRIPE_WEBHOOK_SECRET` unset. Refuses rather than skipping verification |
+| 500 | `handler failed` | The dedupe row was deleted so Stripe's retry can reprocess |
+
+**Notes**
+
+- **Replay defence is the primary-key insert on `webhook_events`**, not a
+  check-then-insert. Verified: three simultaneous deliveries of one event id
+  produced one `ok` and two `already processed`, and three simultaneous
+  deliveries with *different* ids for the same intent produced exactly one
+  `order_paid`.
+- **A payment whose amount disagrees with the order is refused**, logged as
+  `webhook_amount_mismatch`, and the order is frozen out of the sweep
+  (`expiresAt` cleared) but left `PENDING` for a human. It never becomes `PAID`.
+- A refund does **not** restock and does **not** free the pickup seat. Staff
+  adjusts inventory by hand (P4).
+- Signature verification is local HMAC. Tests can drive this route with
+  `stripe.webhooks.generateTestHeaderString({ payload, secret })` and no Stripe
+  account — see `docs/HANDOFF.md`.
+
+---
+
+### `GET /api/cron/sweep`
+
+Expires unpaid card orders and gives back what they were holding. Called by
+Vercel Cron every 5 minutes (`vercel.json`), not by any client.
+
+**Request** — `Authorization: Bearer $CRON_SECRET`. Compared in constant time.
+No secret configured means nobody is authorised.
+
+**Response 200**
+
+```json
+{ "scanned": 1, "released": 1, "failed": 0 }
+```
+
+`scanned` is how many stale orders were found (max 100 per run), `released` how
+many this run actually moved to `EXPIRED` — a lower number is normal and means
+another process got there first. `failed` is per-order errors; one bad order
+does not abort the run.
+
+**Errors** — `401 unauthorized` (plain text, no error envelope: this route has
+no client to branch on codes).
+
+**Notes**
+
+- Selects `status = PENDING AND paymentMethod = CARD AND expiresAt < now()`.
+  Cash orders are never swept — they are `RESERVED` from creation and nothing
+  expires them.
+- Cancels at Stripe **before** releasing. If payment lands a millisecond later,
+  the succeeded webhook finds a non-`PENDING` order and no-ops, so the money is
+  never taken for stock that has already been given back.
+- Idempotent. Verified: a second run immediately after returns
+  `{"scanned":0,"released":0,"failed":0}` and stock is unchanged.
+- Worst case an abandoned cart holds stock for `pending_order_ttl_minutes` + 5.
+
+---
+
 Planned, in build order (shipped rows marked):
 
 | Phase | Endpoint | Purpose | Status |
 |---|---|---|---|
 | P2 | `GET /api/products` | Catalog with category, rarity and allergen-exclusion filtering | **Shipped** — §6 above |
 | P2 | `GET /api/slots` | Pickup windows with live remaining capacity | **Shipped** — §6 above |
-| P3 | `POST /api/checkout` | Validate, reprice, hold stock and a seat, create the order, open a PaymentIntent | Planned |
-| P3 | `POST /api/webhooks/stripe` | The only writer of `PAID`. Replay-protected | Planned |
-| P3 | `GET /api/orders/[orderNumber]` | Confirmation page polling | Planned |
-| P3 | `GET /api/cron/sweep` | Expire unpaid card orders and release what they held | Planned |
+| P3 | `POST /api/checkout` | Validate, reprice, hold stock and a seat, create the order, open a PaymentIntent | **Shipped** — §6 above |
+| P3 | `POST /api/webhooks/stripe` | The only writer of `PAID`. Replay-protected | **Shipped** — §6 above |
+| P3 | `GET /api/orders/[orderNumber]` | Confirmation page polling | Planned — **not shipped, and `/order/[orderNumber]` cannot be built without it.** See `docs/HANDOFF.md` §22 |
+| P3 | `GET /api/cron/sweep` | Expire unpaid card orders and release what they held | **Shipped** — §6 above |
 | P4 | `/api/admin/*` | Pick list, mark packed, mark picked up, record cash, refund, stock adjustment | Planned |
 
 ---
@@ -446,4 +669,5 @@ Planned, in build order (shipped rows marked):
 |---|---|---|
 | 2026-09-02 | P1 | Schema, constraints, atomic functions, seed and shared libs landed. Conventions, error codes and shared types published. No endpoints yet |
 | 2026-09-02 | P1 | Manager review: real branded catalog items added to `prisma/seed.ts` (Doritos ×5, Kool-Aid Jammers ×3, chip assortment ×3), `components/ui/rarity.ts` P0 placeholder deleted and `RarityCard` swapped onto the canonical `@prisma/client`/`lib/rarity.ts` types (HANDOFF §5, resolved). Independently re-verified: fresh migrate + constraints + double seed, `tsc --noEmit`, full `eslint .` |
+| 2026-09-03 | P3 | `POST /api/checkout`, `POST /api/webhooks/stripe` and `GET /api/cron/sweep` shipped and documented in §6, plus `lib/codes.ts`, `lib/rate-limit.ts`, `lib/timezone.ts`, `lib/stripe/{client,payments}.ts`, `lib/db/release.ts`, `lib/email.ts`, `checkoutSchema` in `lib/validation.ts`, and `vercel.json`. **Card and cash are both live** (manager decision, resolving BUILDPLAN.md's open item). The timezone bug from HANDOFF §3/§13 is fixed at both call sites: `lib/timezone.ts` pins `America/Vancouver`, the cutoff derives the slot's real instant from it, and `GET /api/slots` now floors "today" on the school's calendar day — at 00:25 UTC the old code returned 18 slots and dropped the school's current afternoon; it returns 21. Deviations from backend.md, all hardenings, are listed in `HANDOFF.md` §18. Verified against the seeded dev database: cash order lands `RESERVED` with stock and `booked_count` decremented, partial-failure rollback leaves nothing behind, 20-way slot and stock races produce exactly one winner, signed webhook flips the order to `PAID`, replay and concurrent triple replay are no-ops, a tampered `amount_received` is refused, a decline releases stock and seat, and the sweep expires and restocks an aged order and is a no-op on the second run |
 | 2026-09-02 | P2 | `GET /api/products` and `GET /api/slots` shipped and documented in §6. `lib/validation.ts` added with `productQuerySchema` (`checkoutSchema` follows in P3, deliberately not stubbed). Two hardenings over the spec sketch, both noted in `HANDOFF.md` §P2: `excludeAllergens` tokens are validated against the `Allergen` enum instead of passed through as free strings, and a bad query param returns `INVALID_INPUT` instead of an unhandled `ZodError`. Verified against the seeded dev database with curl in both `next dev` and `next build && next start` — allergen exclusion confirmed to drop a product on ANY match (`PEANUTS` removes Trail Mix Bag, whose list is `PEANUTS`/`TREE_NUTS`/`SOY`), `remaining`/`full` confirmed against `book_slot()`-modified counts, `Cache-Control: no-store` confirmed on both, both routes confirmed `ƒ` (dynamic) in the production build |
