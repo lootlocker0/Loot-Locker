@@ -699,7 +699,7 @@ below is a real hole in code I wrote, not a hypothetical.
 - **`lib/settings.ts`'s 60-second cache** means no test that changes a setting
   and immediately calls a route is reliable. Restart the server, or wait it out.
 
-### 22. [manager, frontend — BLOCKING] `GET /api/orders/[orderNumber]` is not shipped
+### ~~22. [manager, frontend — BLOCKING] `GET /api/orders/[orderNumber]` is not shipped~~ RESOLVED — option 3, shipped
 
 BUILDPLAN P3's next step is frontend building `/checkout` and
 `/order/[orderNumber]`, and the confirmation page cannot exist without this
@@ -721,6 +721,44 @@ my preference:
 3. Set a short-lived signed cookie at checkout scoped to that order.
 
 Say which and I will build it. It is small once the shape is settled.
+
+**Resolution (manager): option 3 — a short-lived signed httpOnly cookie, scoped
+to the one order — and it is now built.** Chosen because it needs no PII
+round-trip: nothing is re-typed, nothing has to survive the Stripe redirect in
+`sessionStorage` or a query string, it works identically for cash and card, and
+it expires on its own.
+
+**Done (backend, 2026-09-03).** `GET /api/orders/[orderNumber]` is live and
+documented in `API-CONTRACT.md` §6. **Frontend is unblocked** — the polling
+recipe, the exact response shape, and the one integration rule that will bite
+(poll from a *client* component; a Server Component's `fetch` does not carry the
+browser's cookie) are all in that section.
+
+- `POST /api/checkout` sets `ll_ord_<orderNumber>` on both the cash and the card
+  response: `HttpOnly`, `SameSite=Lax`, `Secure` in production, `Path=/api/orders`,
+  `Max-Age` 48 h. Value is `v1.<orderId>.<expiryUnixSeconds>.<base64url
+  HMAC-SHA256 of the first three>`, signed with the new `ORDER_SESSION_SECRET`
+  (`lib/order-session.ts`, added to `.env.example` and to the local `.env`).
+- The token binds the **database id**, never the human-facing order number, and
+  the route re-checks that the row it resolved carries the order number in the
+  URL. A cookie for order A therefore cannot read order B — not by editing the
+  address bar and not by being renamed to B's cookie name. Both verified.
+- **One cookie per order**, rather than a single `ll_order` that each checkout
+  overwrites. That was the "use your judgement" edge in the decision: naming the
+  cookie after the order number keeps every receipt from one sitting readable,
+  and costs nothing, because the name is not trusted for anything. Verified: two
+  orders from one browser, both still readable afterwards.
+- Response carries `status`, `paymentMethod`, the three amounts, `expiresAt`,
+  `placedAt`, the slot's `label`/`startTime`/`location`/`serviceDate`, the line
+  snapshots with **full un-truncated `allergensSnapshot`** (CLAUDE.md §2.8 — this
+  is the surface that invariant is written about), and `pickupCode` **only** when
+  the status is `RESERVED` or `PAID`. It carries **no** `studentName`, `email`,
+  `phone` or `homeroom`, and no slot `capacity`/`bookedCount`.
+- Every rejection — unknown order number, no cookie, expired cookie, forged
+  cookie, another order's cookie — is the same `ORDER_NOT_FOUND` 404 with an
+  identical body. New code in `lib/errors.ts`. Nothing distinguishes them, so the
+  route is not an enumeration oracle.
+- Open sub-questions I did not decide alone are in item 25 below.
 
 ### 23. [human, P4/P5] No confirmation email is sent, deliberately
 
@@ -779,3 +817,164 @@ Against the seeded dev Postgres, `next dev`, real HTTP:
 21. In particular the spend-cap race, the crash-mid-webhook window, out-of-order
 Stripe events, and the connection-pool ceiling are all untested by me. Nothing
 has run against a real Stripe account.
+
+---
+
+## P3 step 1b — backend (order receipt endpoint) · 2026-09-03
+
+Shipped: `GET /api/orders/[orderNumber]`, `lib/order-session.ts`, the
+`ORDER_NOT_FOUND` error code, the `ORDER_SESSION_SECRET` variable, and the
+per-order cookie on both `POST /api/checkout` responses. Item 22 above is
+resolved and carries the shape and the reasoning; this item is what is left open
+and where to attack it.
+
+### 25. [manager] Two calls I did not make alone
+
+1. ~~**The pickup code is withheld for `PACKED` and `PICKED_UP`.**~~ RESOLVED
+   (manager) — added both to `CODE_VISIBLE_STATUSES`. Agreed with the
+   recommendation; no reason to wait for P4 since it's a genuine bug (a
+   receipt that stops showing the code exactly when staff asks the student
+   to read it aloud), not a policy question. `tsc`/`eslint` re-verified
+   clean after the change.
+2. **Checkout now refuses in production when `ORDER_SESSION_SECRET` is unset.**
+   `assertOrderSessionConfigured()` is the first statement in the handler, before
+   validation, before any money or stock moves. The alternative — set no cookie
+   and carry on — means a deployment that takes payment normally and shows every
+   student a confirmation page that says their order does not exist, with no
+   symptom visible from the outside. Same reasoning as the rate limiter's
+   fail-closed mode (item 19). In dev and CI, an unset secret falls back to a
+   random per-process key, so nothing breaks without it. Challenge this if you
+   disagree; it is one `if`.
+
+### 26. [human, school data policy] The receipt cookie on a shared device
+
+Not a bug and not something I should decide (CLAUDE.md §7). The cookie is a
+48-hour bearer token sitting in one browser profile. On a personal phone that is
+exactly right. On a shared library machine or a class set of iPads, the next
+student to open the site can pull up the previous student's receipt — order
+total, snack list, pickup window, and the pickup code that opens the locker — for
+two days.
+
+It contains no name, email, phone or homeroom, which is the reason the projection
+is that narrow. But a live pickup code is a physical credential. Options, none of
+them built: a shorter TTL (a receipt is mostly consumed within an hour of the
+bell), an explicit "done — forget this order" control that clears the cookie, or
+accepting it because students bring their own phones. **A decision about what
+school-owned shared devices actually look like is required before launch**, and
+it belongs on the same list as the email-delivery question in item 23.
+
+### 27. [frontend] Two response signals the confirmation page must not get wrong
+
+- **`status: "PENDING"` with `expiresAt: null` is a frozen order, not a live
+  one.** That combination is only produced by the webhook's amount-mismatch path
+  (item 18.5): the payment did not match the order, so it will never become
+  `PAID`, and it has been deliberately parked out of the sweep's reach for a
+  human. Polling it forever shows a spinner that never resolves. Stop polling and
+  say something that sends the student to staff — do not say "paid" and do not
+  say "expired".
+- **Every other `PENDING` carries a real `expiresAt`.** Once it is in the past
+  the order is doomed but may not be swept for up to five more minutes, so a poll
+  can legitimately return a `PENDING` order that is already dead. Treat
+  `expiresAt` in the past as expired in the UI rather than waiting for the status
+  to catch up.
+
+### 28. [qa] WHERE TO ATTACK `GET /api/orders/[orderNumber]`
+
+The route is a read with no transaction and no writes, so the failures are
+authorisation and staleness rather than races. Per the definition of done, the
+concurrency case it is genuinely vulnerable to is the **poll-versus-sweep window
+in item 27**: between `expiresAt` passing and the sweep running, this endpoint
+reports an order as `PENDING` that is already unrecoverable. It is a stale read
+by design (`no-store` gets you freshness at the database, not at the clock), and
+the UI, not the route, is what has to be right about it.
+
+Everything below is a real hole or a real trap in code I just wrote:
+
+- **The five rejection cases must stay indistinguishable.** No cookie, tampered
+  signature, token signed with the wrong key, correctly-signed-but-expired token,
+  and a valid cookie for a *different* real order must all return byte-identical
+  `ORDER_NOT_FOUND` bodies with the same status. I verified all five by hand;
+  make them a test, because the natural "improvement" someone makes later is a
+  helpful distinct message, and that turns the route into an enumeration oracle.
+  The cross-order case is the one that matters most: sign a token for order B,
+  put it in a cookie named for order A, request order A.
+- **`pickupCode` presence across the whole status machine.** The rule is a `Set`
+  in the route, not a status comparison, so a regression is silent. Drive an
+  order through `PENDING`, `RESERVED`, `PAID`, `PACKED`, `PICKED_UP`,
+  `CANCELLED`, `EXPIRED`, `REFUNDED` with direct database writes and assert on
+  the presence of the **key**, not its truthiness. Note items 25.1 — `PACKED` and
+  `PICKED_UP` currently withhold it, and that may deliberately change.
+- **The projection is the PII boundary.** Assert that no response ever contains
+  `studentName`, `email`, `phone`, `homeroom`, `capacity`, `bookedCount` or the
+  order's `id`. It is an explicit `select`, so a column added in P4 cannot leak
+  by default — but only a test keeps it that way.
+- **The dev key is per-process.** With `ORDER_SESSION_SECRET` unset, the module
+  generates a random key at boot, so any test that restarts the server between
+  the checkout and the read gets a 404 that looks like a logic bug. **Set
+  `ORDER_SESSION_SECRET` explicitly in the CI environment** and assert
+  `{"event":"order_session_mode","mode":"configured"}` at boot, the same way you
+  assert the rate-limit and Stripe modes.
+- **`Secure` follows `NODE_ENV`, not the URL scheme.** A suite that runs
+  `next build && next start` with `NODE_ENV=production` over plain http will have
+  the browser silently drop the cookie and every read will 404. Playwright over
+  http needs a non-production build, or an https origin.
+- **The cookie is `Path=/api/orders`.** It is not sent to `/order/[orderNumber]`
+  itself, which is intentional (item 22) but means a Server Component render of
+  the confirmation page cannot read the order. If the E2E ever starts asserting
+  server-rendered receipt content, that is why it fails.
+- **Not rate limited, deliberately** — no database query happens until a
+  signature verifies, and a per-IP limit on a 1.5 s poll behind a school's single
+  NAT address would break the page for everyone. If a write is ever added to this
+  route, that reasoning expires with it.
+- **Signature comparison is `timingSafeEqual`, but the cheap structural checks
+  (part count, version prefix, expiry format) return early.** An attacker can
+  distinguish "malformed" from "bad signature" by timing. It leaks nothing they
+  do not already know about their own token, and fixing it would mean HMAC-ing
+  garbage; noted rather than defended.
+- **Rotating `ORDER_SESSION_SECRET` invalidates every outstanding receipt.**
+  There is no key-id in the token and no second-key grace path. Rotate outside
+  service hours, or accept that every order placed in the previous 48 hours
+  becomes unreadable. If rotation ever needs to be routine, the token version
+  prefix (`v1.`) is the hook to hang a key id on.
+
+### 29. [manager] Verification actually run for this endpoint
+
+Against the seeded dev Postgres, `next dev`, real HTTP, real cookie jars:
+
+- **Cash checkout** → `Set-Cookie: ll_ord_LL-46154=v1.<cuid>.<exp>.<mac>;
+  Path=/api/orders; Max-Age=172800; HttpOnly; SameSite=lax` (no `Secure`, correct
+  for http dev). `GET /api/orders/LL-46154` with that jar → 200, `RESERVED`,
+  `pickupCode` present, `Trail Mix Bag` carrying `["PEANUTS","TREE_NUTS","SOY"]`
+  intact, slot `Lunch A / 11:50 / Locker bank C`, no PII field anywhere in the
+  body.
+- **Card checkout** → cookie set the same way. Read while `PENDING`: **no
+  `pickupCode` key**, `expiresAt` +15 m. Then a signed
+  `payment_intent.succeeded` (`generateTestHeaderString`, item 20) → the same
+  request now returns `PAID` with `pickupCode` and `expiresAt: null`.
+- **Expired order** → force `expires_at` into the past, run the sweep
+  (`{"scanned":1,"released":1,"failed":0}`), read again → `EXPIRED`, no
+  `pickupCode`. The page can stop polling on the status alone.
+- **Rejections, all identical 404 `ORDER_NOT_FOUND`:** no cookie; last character
+  of the signature flipped; a token signed with a different key; a correctly
+  signed token whose expiry is one second in the past; the cash order's cookie
+  renamed onto the card order's cookie name; a correctly signed token for the
+  *card* order presented at the *cash* order's URL; an order number that does not
+  exist, both with and without a valid cookie for a real order; a malformed
+  `not-an-order` path segment. A control request with a token I signed
+  independently from the `.env` secret returned 200, which is what proves the
+  route is really verifying against that secret and not accepting anything.
+- **Two orders, one browser** → both cookies coexist in one jar and both receipts
+  stay readable.
+- **Key modes** → `unconfigured-production` refuses to sign,
+  `ephemeral-dev` signs and verifies, `configured` signs and verifies. The dev
+  server logs `{"event":"order_session_mode","mode":"configured"}` at boot.
+- **Logs** → the only new line is
+  `{"event":"order_lookup_denied","reason":"no_cookie"|"invalid_token"|"order_mismatch"|"malformed_order_number"|"order_row_missing"}`.
+  Grepped the whole dev log for the test student's name, email and phone: zero
+  hits (CLAUDE.md §2.6). The reason is in the log and never in the response.
+- `npx tsc --noEmit` and a full `npx eslint .` both clean.
+
+**Not tested by me:** a production build (so `Secure` on the cookie and the
+production fail-closed path in checkout are reasoned, not observed), a real
+browser's cookie handling across the actual Stripe redirect, and everything in
+item 28.

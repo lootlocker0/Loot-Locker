@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { checkoutSchema } from "@/lib/validation";
 import { getSetting } from "@/lib/settings";
@@ -11,6 +11,10 @@ import { schoolDayStartInstant, slotStartInstant } from "@/lib/timezone";
 import { createOrderPaymentIntent } from "@/lib/stripe/payments";
 import { releaseOrder } from "@/lib/db/release";
 import { sendConfirmationEmail } from "@/lib/email";
+import {
+  assertOrderSessionConfigured,
+  orderSessionCookie,
+} from "@/lib/order-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +38,14 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
+    // ── 0. Refuse before touching anything if we cannot issue a receipt. ──────
+    // Every successful response below sets a signed cookie that is the ONLY way
+    // the student will ever read their order back (GET /api/orders/…). With no
+    // signing secret we could still take the money and still hold the stock, and
+    // the student would get a confirmation page that says the order does not
+    // exist. Checked here, first, so the failure costs nobody anything.
+    assertOrderSessionConfigured();
+
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
     // ── 1. Validate. Never coerce. ────────────────────────────────────────────
@@ -258,7 +270,7 @@ export async function POST(req: NextRequest) {
         console.error("confirmation notification failed", e),
       );
       logEvent("order_reserved_cash", { orderId: order.id, totalCents });
-      return Response.json(
+      const res = NextResponse.json(
         {
           orderNumber: order.orderNumber,
           pickupCode: order.pickupCode,
@@ -267,6 +279,10 @@ export async function POST(req: NextRequest) {
         },
         { headers: { "Cache-Control": "no-store" } },
       );
+      // The receipt key. Same cookie on both payment paths, deliberately: the
+      // confirmation page does not have to know how the order was paid for.
+      res.cookies.set(orderSessionCookie(order));
+      return res;
     }
 
     // ── 7b. CARD — open a PaymentIntent, idempotent on the order id. ──────────
@@ -299,7 +315,7 @@ export async function POST(req: NextRequest) {
 
     logEvent("payment_intent_created", { orderId: order.id, totalCents });
 
-    return Response.json(
+    const res = NextResponse.json(
       {
         orderNumber: order.orderNumber,
         totalCents,
@@ -311,6 +327,11 @@ export async function POST(req: NextRequest) {
       },
       { headers: { "Cache-Control": "no-store" } },
     );
+    // Set before the student leaves for Stripe, not after they come back: the
+    // return trip is a top-level navigation the server does not control, and a
+    // SameSite=Lax cookie issued now survives it.
+    res.cookies.set(orderSessionCookie(order));
+    return res;
   } catch (e) {
     return errorResponse(e);
   }

@@ -11,11 +11,12 @@ not stub it.
 **Rule for backend:** an endpoint ships to `main` and to this file in the same
 commit. No exceptions, including "temporary" internal routes.
 
-**Status:** P3 step 1 (checkout, Stripe webhook, expiry sweep) complete.
-`GET /api/products`, `GET /api/slots`, `POST /api/checkout`,
-`POST /api/webhooks/stripe` and `GET /api/cron/sweep` are live and documented in
-§6. `GET /api/orders/[orderNumber]` is **not** shipped — the confirmation page
-is blocked on it (`docs/HANDOFF.md` §22). Everything else in the §6 table is
+**Status:** P3 step 1 (checkout, Stripe webhook, expiry sweep) complete, plus the
+confirmation-page read. `GET /api/products`, `GET /api/slots`,
+`POST /api/checkout`, `POST /api/webhooks/stripe`,
+`GET /api/orders/[orderNumber]` and `GET /api/cron/sweep` are live and documented
+in §6. **The confirmation page is unblocked** (`docs/HANDOFF.md` §22 is
+resolved). Everything else in the §6 table is
 still planned and must not be called. The sections below define the conventions every endpoint
 follows, plus the data types and enum values fixed by the database. Later phases
 append to §6 without restructuring anything above it.
@@ -32,7 +33,7 @@ append to §6 without restructuring anything above it.
 | Money | **Integer cents, always.** Field names end in `Cents`. There are no decimal amounts anywhere in this API |
 | Currency | CAD. Not configurable |
 | Dates | ISO 8601 strings in responses |
-| Auth | Public routes are unauthenticated. `/api/cron/*` requires `Authorization: Bearer $CRON_SECRET`. Admin routes (P4) require an admin session |
+| Auth | Public routes are unauthenticated. `GET /api/orders/[orderNumber]` is authorised by the per-order httpOnly cookie that `POST /api/checkout` sets. `/api/cron/*` requires `Authorization: Bearer $CRON_SECRET`. Admin routes (P4) require an admin session |
 | PII | Never in a path, query string, or redirect. Student name, email, phone and homeroom travel in POST bodies only |
 
 ### Totals
@@ -64,6 +65,7 @@ Branch on `code`, never on `message` — messages are copy and will change.
 |---|---|---|---|
 | `INVALID_INPUT` | 400 | Check the highlighted fields. | `fields`: `{ [fieldName]: string[] }` |
 | `PAYMENT_FAILED` | 402 | Payment was declined. | — |
+| `ORDER_NOT_FOUND` | 404 | We couldn't find that order. | — |
 | `PAST_CUTOFF` | 409 | Ordering closed for that pickup time. | — |
 | `SLOT_FULL` | 409 | That pickup time just filled up. | — |
 | `OUT_OF_STOCK` | 409 | An item just sold out. | `productName`: string |
@@ -76,6 +78,11 @@ Source of truth: `lib/errors.ts`. Codes are added there first.
 
 `SLOT_FULL` and `OUT_OF_STOCK` are recoverable: refetch slots and the catalog
 and let the student retry. The rest are terminal for that attempt.
+
+`ORDER_NOT_FOUND` is deliberately ambiguous. It means "no order you are allowed
+to read" — an unknown order number, a missing or expired confirmation cookie, and
+a cookie belonging to a different order all produce the identical body. Do not
+write copy that guesses which one happened.
 
 ---
 
@@ -613,6 +620,149 @@ Anything else is logged as `webhook_unhandled` and 200s.
 
 ---
 
+### `GET /api/orders/[orderNumber]`
+
+The confirmation page. Reads one order back: status, money, lines, pickup window,
+and — once the order is actually claimable — the pickup code. This is what
+`/order/[orderNumber]` polls after a card payment.
+
+**Request** — no body, no query params. `orderNumber` is the value returned by
+`POST /api/checkout` (`LL-#####`). Case-insensitive in the URL.
+
+**Auth: the cookie set by `POST /api/checkout`, not the URL.** Every successful
+checkout response carries
+
+```
+Set-Cookie: ll_ord_LL-46154=<signed token>; Path=/api/orders; Max-Age=172800;
+            HttpOnly; SameSite=Lax[; Secure in production]
+```
+
+One cookie per order, named after the order number, valid 48 hours. It is
+`HttpOnly` — no script can read it and none needs to.
+
+**For frontend, this is the entire integration:**
+
+- Poll from the **client**, with an ordinary same-origin `fetch("/api/orders/" + orderNumber)`.
+  The default `credentials: "same-origin"` already sends the cookie; setting
+  `credentials: "omit"` breaks it.
+- **A Server Component cannot fetch this.** A server-side `fetch` does not carry
+  the browser's cookies unless you forward them by hand. The confirmation page's
+  polling belongs in a client component.
+- Nothing needs to be remembered across the Stripe redirect. No `sessionStorage`,
+  no email in a query string, no PII in the URL at all (CLAUDE.md §2.6). The
+  cookie is `SameSite=Lax`, so it survives the top-level navigation back from
+  Stripe.
+- Two orders in one sitting both stay readable — the cookies do not overwrite
+  each other.
+
+**Response 200**
+
+```jsonc
+{
+  "orderNumber": "LL-46154",
+  "status": "RESERVED",                    // OrderStatus, §3
+  "paymentMethod": "CASH_AT_PICKUP",
+  "subtotalCents": 800,
+  "taxCents": 0,
+  "totalCents": 800,
+  "pickupCode": "TWM3",                    // ONLY when status is RESERVED or PAID
+  "expiresAt": null,                       // ISO string only while a card order is PENDING
+  "placedAt": "2026-09-03T04:43:41.991Z",
+  "slot": {
+    "label": "Lunch A",
+    "startTime": "11:50",                  // local wall clock, 24h
+    "location": "Locker bank C",
+    "serviceDate": "2026-09-04T00:00:00.000Z"
+  },
+  "items": [
+    {
+      "productId": "cmtl15gos0002vp7dhfk4vb0o",
+      "qty": 2,
+      "nameSnapshot": "Milk Chocolate Bar",
+      "unitPriceCents": 250,
+      "raritySnapshot": "UNCOMMON",
+      "allergensSnapshot": ["DAIRY", "SOY"]
+    }
+  ]
+}
+```
+
+**`pickupCode` is present only when `status` is `RESERVED` or `PAID`.** It is a
+key field, not a display field: it opens a locker. A `PENDING` card order may
+still expire unpaid and hand its stock and its seat back, so a code for it would
+stand for nothing. Branch on the status, and never render an empty code box —
+the field is **omitted**, not `null`.
+
+**The line items are the purchase snapshots** (`nameSnapshot`, `unitPriceCents`,
+`raritySnapshot`, `allergensSnapshot`), not the live product. Render
+`allergensSnapshot` **in full, never truncated, never hover-only** — this is the
+receipt surface CLAUDE.md §2.8 is written about.
+
+**No `studentName`, `email`, `phone` or `homeroom` are returned, at all.** The
+cookie proves whose order this is; that is not a reason to hand a child's contact
+details back over HTTP to draw a receipt that does not need them. If a screen
+ever genuinely needs them, ask in `HANDOFF.md` — do not assume the field is
+coming.
+
+`capacity` and `bookedCount` are not returned either, for the same reason as
+`GET /api/slots`.
+
+**Polling recipe (card):** after Stripe Elements reports success, poll every
+1.5 s for up to 20 s and stop on the first `status` that is not `PENDING`. If it
+is still `PENDING` when the budget runs out, say **"confirming your payment"** and
+keep a manual refresh available — never "paid". Only the webhook writes `PAID`
+(CLAUDE.md §2.3). If `status` comes back `EXPIRED` or `CANCELLED`, stop polling:
+the hold is gone and the cart has to be rebuilt.
+
+Two things about `expiresAt` that the page must get right:
+
+- **`status: "PENDING"` with `expiresAt: null` is a frozen order, not a live
+  one.** Only one thing produces it: the payment reached Stripe with an amount
+  that did not match the order, so the webhook refused it and parked the order
+  out of the expiry sweep's reach for a human to look at. It will never become
+  `PAID` on its own. Stop polling and send the student to staff — do not say
+  "paid", do not say "expired".
+- **A `PENDING` order whose `expiresAt` is already in the past is dead**, even
+  though the sweep may take up to five more minutes to say so. Treat the
+  timestamp as authoritative rather than waiting for the status to catch up.
+
+**Errors**
+
+| `code` | HTTP | Cause | Client action |
+|---|---|---|---|
+| `ORDER_NOT_FOUND` | 404 | Unknown order number, **or** no cookie, **or** an expired/forged cookie, **or** a valid cookie for a different order | Show "we can't find that order" and offer the catalog. Do not retry in a loop |
+| `INTERNAL` | 500 | Database failure, or `ORDER_SESSION_SECRET` unset on the server | Retry once |
+
+All four `ORDER_NOT_FOUND` causes are indistinguishable by design. `LL-#####` is
+a 90,000-value space; an error that admitted "wrong cookie" would confirm that an
+order exists and turn the route into an enumeration oracle. Same reasoning as
+`SLOT_FULL` in checkout.
+
+**Caching** — `Cache-Control: no-store`, route is `force-dynamic`. This is a
+per-student receipt behind a cookie: a shared cache keyed on the URL alone would
+hand one student's pickup code to the next.
+
+**Notes**
+
+- The token is an HMAC-SHA256 over `v1.<orderId>.<expiry>` signed with
+  `ORDER_SESSION_SECRET` (`lib/order-session.ts`). It binds the order's database
+  id, and the route then checks that the row it resolved carries the order number
+  in the URL — so a cookie for order A cannot read order B by editing the address
+  bar, even if it is renamed to B's cookie name. Verified both ways.
+- **Not rate limited**, deliberately. The database is only touched after a
+  signature verifies, so guessed order numbers cost one HMAC and no query — there
+  is no enumeration surface to protect. A per-IP limit would also be actively
+  harmful here: the whole school shares one NAT address and the confirmation page
+  polls at 1.5 s.
+- Read-only. It never writes, never touches stock or slot capacity, and is safe
+  to poll.
+- `ORDER_SESSION_SECRET` is required in production. With it unset,
+  `POST /api/checkout` refuses (500) rather than creating orders whose receipt
+  nobody could ever open. In dev and CI an ephemeral per-process key is used
+  instead, so cookies work out of the box and stop verifying on restart.
+
+---
+
 ### `GET /api/cron/sweep`
 
 Expires unpaid card orders and gives back what they were holding. Called by
@@ -657,7 +807,7 @@ Planned, in build order (shipped rows marked):
 | P2 | `GET /api/slots` | Pickup windows with live remaining capacity | **Shipped** — §6 above |
 | P3 | `POST /api/checkout` | Validate, reprice, hold stock and a seat, create the order, open a PaymentIntent | **Shipped** — §6 above |
 | P3 | `POST /api/webhooks/stripe` | The only writer of `PAID`. Replay-protected | **Shipped** — §6 above |
-| P3 | `GET /api/orders/[orderNumber]` | Confirmation page polling | Planned — **not shipped, and `/order/[orderNumber]` cannot be built without it.** See `docs/HANDOFF.md` §22 |
+| P3 | `GET /api/orders/[orderNumber]` | Confirmation page polling | **Shipped** — §6 above. Authorised by the per-order checkout cookie (`docs/HANDOFF.md` §22, resolved) |
 | P3 | `GET /api/cron/sweep` | Expire unpaid card orders and release what they held | **Shipped** — §6 above |
 | P4 | `/api/admin/*` | Pick list, mark packed, mark picked up, record cash, refund, stock adjustment | Planned |
 
@@ -670,4 +820,5 @@ Planned, in build order (shipped rows marked):
 | 2026-09-02 | P1 | Schema, constraints, atomic functions, seed and shared libs landed. Conventions, error codes and shared types published. No endpoints yet |
 | 2026-09-02 | P1 | Manager review: real branded catalog items added to `prisma/seed.ts` (Doritos ×5, Kool-Aid Jammers ×3, chip assortment ×3), `components/ui/rarity.ts` P0 placeholder deleted and `RarityCard` swapped onto the canonical `@prisma/client`/`lib/rarity.ts` types (HANDOFF §5, resolved). Independently re-verified: fresh migrate + constraints + double seed, `tsc --noEmit`, full `eslint .` |
 | 2026-09-03 | P3 | `POST /api/checkout`, `POST /api/webhooks/stripe` and `GET /api/cron/sweep` shipped and documented in §6, plus `lib/codes.ts`, `lib/rate-limit.ts`, `lib/timezone.ts`, `lib/stripe/{client,payments}.ts`, `lib/db/release.ts`, `lib/email.ts`, `checkoutSchema` in `lib/validation.ts`, and `vercel.json`. **Card and cash are both live** (manager decision, resolving BUILDPLAN.md's open item). The timezone bug from HANDOFF §3/§13 is fixed at both call sites: `lib/timezone.ts` pins `America/Vancouver`, the cutoff derives the slot's real instant from it, and `GET /api/slots` now floors "today" on the school's calendar day — at 00:25 UTC the old code returned 18 slots and dropped the school's current afternoon; it returns 21. Deviations from backend.md, all hardenings, are listed in `HANDOFF.md` §18. Verified against the seeded dev database: cash order lands `RESERVED` with stock and `booked_count` decremented, partial-failure rollback leaves nothing behind, 20-way slot and stock races produce exactly one winner, signed webhook flips the order to `PAID`, replay and concurrent triple replay are no-ops, a tampered `amount_received` is refused, a decline releases stock and seat, and the sweep expires and restocks an aged order and is a no-op on the second run |
+| 2026-09-03 | P3 | `GET /api/orders/[orderNumber]` shipped and documented in §6, unblocking the confirmation page (`HANDOFF.md` §22, resolved by the manager in favour of option 3). Added `lib/order-session.ts`, the `ORDER_NOT_FOUND` code in `lib/errors.ts`, and the `ORDER_SESSION_SECRET` environment variable; `POST /api/checkout` now sets a signed, httpOnly, per-order cookie (`ll_ord_<orderNumber>`, `Path=/api/orders`, 48 h) on both the cash and card responses and refuses up front if the signing secret is missing in production. The response carries status, the three amounts, the line snapshots including full allergens, the pickup window's label/time/location/date, and the pickup code **only** for `RESERVED` or `PAID`; it carries no student name, email, phone or homeroom. Verified end to end against the dev database: cash order readable with its code, card order readable while `PENDING` **without** a code and with one after a signed `payment_intent.succeeded`, an expired order readable as `EXPIRED` with no code, and no cookie / tampered signature / wrong signing key / expired token / a different order's cookie renamed onto this order all returning the identical `ORDER_NOT_FOUND` |
 | 2026-09-02 | P2 | `GET /api/products` and `GET /api/slots` shipped and documented in §6. `lib/validation.ts` added with `productQuerySchema` (`checkoutSchema` follows in P3, deliberately not stubbed). Two hardenings over the spec sketch, both noted in `HANDOFF.md` §P2: `excludeAllergens` tokens are validated against the `Allergen` enum instead of passed through as free strings, and a bad query param returns `INVALID_INPUT` instead of an unhandled `ZodError`. Verified against the seeded dev database with curl in both `next dev` and `next build && next start` — allergen exclusion confirmed to drop a product on ANY match (`PEANUTS` removes Trail Mix Bag, whose list is `PEANUTS`/`TREE_NUTS`/`SOY`), `remaining`/`full` confirmed against `book_slot()`-modified counts, `Cache-Control: no-store` confirmed on both, both routes confirmed `ƒ` (dynamic) in the production build |
