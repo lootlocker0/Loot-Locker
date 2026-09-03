@@ -47,6 +47,15 @@ export async function releaseOrder(
          WHERE id = ${order.slotId}
       `;
 
+      // This orderBy is currently redundant, not decorative — leave it. qa
+      // deleted it and ran eight concurrent releases of two orders sharing two
+      // products (docs/HANDOFF.md §35.2): nothing changed, because
+      // OrderItem's `@@unique([orderId, productId])` makes an unordered
+      // `findMany` on `orderId` come back in productId-ascending order anyway.
+      // The lock ordering this function needs is currently guarded by that
+      // index, not by this line. If the unique constraint is ever dropped, or
+      // the query planner ever picks a sequential scan, this sort is the only
+      // thing standing between two concurrent releases and a deadlock.
       const items = await tx.orderItem.findMany({
         where: { orderId },
         select: { productId: true, qty: true },

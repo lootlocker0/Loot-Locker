@@ -1,0 +1,99 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Real Postgres, not SQLite and not a mock. Every bug this suite exists to
+    # find lives in row locks, READ COMMITTED re-evaluation and transaction
+    # rollback (qa.md §1). The service container is the CI equivalent of the
+    # testcontainer qa.md describes; `tests/setup/db.ts` points at whatever
+    # QA_DATABASE_URL says.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: looplockers
+          POSTGRES_PASSWORD: looplockers_dev
+          POSTGRES_DB: looplockers_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U looplockers"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      QA_DATABASE_URL: postgresql://looplockers:looplockers_dev@localhost:5432/looplockers_test?sslmode=disable
+      DATABASE_URL: postgresql://looplockers:looplockers_dev@localhost:5432/looplockers_test?sslmode=disable
+      DIRECT_URL: postgresql://looplockers:looplockers_dev@localhost:5432/looplockers_test?sslmode=disable
+      # The Stripe simulator arms on a key containing "placeholder" and only
+      # outside production (HANDOFF §20). No Stripe account is used anywhere.
+      STRIPE_SECRET_KEY: sk_test_placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_qa_local_testing_secret
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_placeholder
+      CRON_SECRET: qa-cron-secret-value
+      # Must be set explicitly: unset falls back to a random per-process key and
+      # every cross-process cookie assertion fails for environmental reasons
+      # that look like route bugs (HANDOFF §28).
+      ORDER_SESSION_SECRET: qa-order-session-secret-value
+      ADMIN_SESSION_SECRET: qa-admin-secret
+      RESEND_API_KEY: re_placeholder
+      NEXT_PUBLIC_SITE_URL: http://127.0.0.1:3111
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+
+      # HANDOFF §9: on a clean checkout `app/layout.tsx` fails to typecheck
+      # until Next's generated types exist. Without this, CI fails on a
+      # pre-existing P0 file for reasons unrelated to the change under test.
+      - run: npx next typegen
+
+      - run: npx tsc --noEmit
+      - run: npx eslint .
+
+      # Pure unit tests: no server, no fixtures, fast.
+      - name: Unit
+        run: npx vitest run tests/unit
+        env:
+          QA_NO_SERVER: "1"
+
+      # NEVER allowed to be skipped. This is the P3 gate.
+      - name: Concurrency
+        run: npx vitest run tests/concurrency
+
+      - name: API contract, money, allergens, receipt authorisation
+        run: npx vitest run tests/api
+
+      # Its own invocation on purpose: the limiter's mode is resolved once per
+      # process, so the 429 branch needs a server started WITHOUT
+      # RATE_LIMIT_DISABLED=1 — and Next refuses to run two dev servers for one
+      # project, so this cannot share a run with the suites above.
+      - name: Rate limiting (429 branch)
+        run: npx vitest run tests/ratelimit
+        env:
+          QA_RATE_LIMIT: "on"
+
+      - name: Dev server log on failure
+        if: failure()
+        run: tail -n 400 "${TMPDIR:-/tmp}/lootlockers-qa-server.log" || true
+
+# NOT WIRED UP YET, deliberately, rather than added as always-green filler:
+#
+#   · Playwright E2E (qa.md §5). `/checkout` and `/order/[orderNumber]` do not
+#     exist yet — frontend is gated on this suite per BUILDPLAN P3 step 2. A
+#     spec written against pages that do not exist is either skipped or lying.
+#   · Bundle secret-leak grep (qa.md §6). Needs `next build`, which is a
+#     separate concern from the P3 checkout gate and belongs with the E2E job.
+#
+# Both are the next QA task once frontend lands, not an omission to forget.

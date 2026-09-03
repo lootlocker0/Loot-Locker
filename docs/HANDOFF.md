@@ -978,3 +978,401 @@ Against the seeded dev Postgres, `next dev`, real HTTP, real cookie jars:
 production fail-closed path in checkout are reasoned, not observed), a real
 browser's cookie handling across the actual Stripe redirect, and everything in
 item 28.
+
+---
+
+## P3 step 2 — qa (concurrency, money, allergen and receipt suites) · 2026-09-03
+
+Shipped: `vitest.config.ts`, `tests/setup/{env,db,server,global-setup,global}.ts`,
+`tests/helpers.ts`, `tests/concurrency/{slot,stock,webhook,sweep,spendcap}.test.ts`,
+`tests/api/{money,orders,allergens}.test.ts`,
+`tests/unit/{timezone,order-session,money,rate-limit}.test.ts`,
+`tests/ratelimit/checkout-limit.test.ts`, `.github/workflows/ci.yml`.
+
+**108 tests. 105 pass, 3 are `it.fails` documenting confirmed bugs** (items 32,
+33, 35 below). `npx tsc --noEmit` and a full `npx eslint .` are clean. No
+application code was changed — the two lock-ordering experiments below were run
+in the working copy and reverted with `git checkout --`; `git status` is clean
+apart from the new test files.
+
+### 30. [manager] How the harness differs from qa.md §1, and why
+
+- **No testcontainers.** Docker-in-docker does not work in this sandbox (the
+  daemon cannot start under the available privileges). `tests/setup/db.ts`
+  points at a real system Postgres 16 and a dedicated `looplockers_test`
+  database instead, with the same idempotent `migrate deploy` +
+  `manual_constraints.sql` + `TRUNCATE`-per-test cycle. Override with
+  `QA_DATABASE_URL`; CI uses a `postgres:16-alpine` service container, which is
+  the same thing by another name. The requirement that matters — **real
+  Postgres, real row locks, real READ COMMITTED** — is met. Nothing is mocked.
+- **Prisma 7 adapter**, per item 2, not qa.md's `datasources` option.
+- **Routes are driven over real HTTP against `next dev`**, spawned once per run
+  by the vitest `globalSetup`. `next build && next start` was rejected: with
+  `NODE_ENV=production` the receipt cookie becomes `Secure` and is dropped over
+  http (item 28), the rate limiter goes `fail-closed` (item 19), and the Stripe
+  simulator disarms (item 20) — the suite would be testing something other than
+  the code.
+- **A harness self-check runs before any test.** It writes a sentinel product to
+  the test database and refuses to start unless `GET /api/products` on the
+  spawned server returns it. Without that, a server that picked up `.env`'s
+  `DATABASE_URL` would silently drive the **dev** database while the suite
+  asserted against the test one — including the 600-way load tests.
+- **Two non-UTC timezones on purpose.** The server runs `TZ=Asia/Tokyo` (+9),
+  the test process `TZ=Pacific/Kiritimati` (+14), the school is
+  `America/Vancouver` (−7). For most of the UTC day all three are on different
+  calendar days, so the cutoff and spend-cap tests only pass if both sides go
+  through `lib/timezone.ts` (item 17's request, honoured).
+- **`vitest.config.ts` deviates from qa.md's snippet** because Vitest 4 removed
+  `poolOptions.forks.singleFork`. The equivalent is `pool: "forks"`,
+  `maxWorkers: 1`, `isolate: false`, `fileParallelism: false`,
+  `sequence.concurrent: false` — one process, one pool, one database, no two
+  files ever mid-TRUNCATE together.
+- **Two vitest invocations are required.** `lib/rate-limit.ts` resolves its mode
+  once per process, and Next refuses to start a second dev server for the same
+  project, so the 429 tests need their own run:
+  `QA_RATE_LIMIT=on npx vitest run tests/ratelimit`.
+
+Run everything locally:
+
+```bash
+QA_NO_SERVER=1 npx vitest run tests/unit
+npx vitest run tests/concurrency tests/api
+QA_RATE_LIMIT=on npx vitest run tests/ratelimit
+```
+
+### 31. [backend — CRITICAL, confirmed] The daily spend cap does not exist under concurrency
+
+**What broke.** Item 21's prediction is exactly right, and it is worse than "a
+student spends 2× the cap": the cap is not a cap at all against a client that
+fires in parallel.
+
+**Minimal reproduction** (`tests/concurrency/spendcap.test.ts`, printed on every
+run): six simultaneous 300c cash checkouts for one email address, cap 1500c.
+
+```
+[spend-cap race] 6×300c concurrent for one email: accepted=6 capped=0 committedCents=1800 capCents=1500
+```
+
+Six of six accepted, zero refused, 1800c committed against a 1500c cap. The same
+six requests **sequentially** produce five accepted and one `SPEND_CAP_EXCEEDED`
+(also asserted), which is what makes this a race and not a misconfiguration.
+Nothing bounds it: N parallel requests each just under the cap all commit,
+because every one of them aggregates the same `spent` and no database constraint
+exists behind the check.
+
+**Severity: critical.** It is a money control on a product used by children,
+it is trivially exploitable from a browser console with `Promise.all`, and there
+is no `reserve_spend()` the way there is a `reserve_stock()`. The test is
+`it.fails` asserting the invariant that *should* hold
+(`committed <= cap`); when a fix lands it will report "expected to fail but
+passed" and must be converted to a normal `it`.
+
+### 32. [backend — CRITICAL, confirmed] A crashed webhook handler loses the payment permanently
+
+**What broke.** Item 21's "worst failure mode in P3", reproduced. The dedupe row
+is inserted before dispatch and only deleted on a *thrown* error, so a kill, an
+OOM or a function timeout leaves it behind and every Stripe retry answers
+`already processed`.
+
+**Minimal reproduction** (`tests/concurrency/webhook.test.ts`): insert the row
+the route would have written, then deliver the event twice.
+
+```ts
+await testDb.webhookEvent.create({ data: { id: "evt_crashed", type: "payment_intent.succeeded" } });
+await postWebhook(event); // -> 200 "already processed"
+await postWebhook(event); // -> 200 "already processed"
+```
+
+```
+[webhook crash window] after 2 retries of a poisoned event id: status=PENDING paidAt=null expiresAt=<future>
+```
+
+The order stays `PENDING` with a live `expiresAt`, so the sweep then expires it
+and gives the stock back. **The student is charged and has no order, and the only
+trace is that no `order_paid` line was ever written.** Nothing alerts.
+
+**Severity: critical.** Needs the two-phase claim item 21 describes (a
+`processedAt` column, and reprocessing a claimed-but-unfinished row older than
+N minutes) — a schema change, so it is a backend + manager decision, not a
+test-side workaround.
+
+### 33. [backend — HIGH, confirmed] Out-of-order Stripe events strand a refunded order at PAID
+
+**What broke.** Item 21's prediction, confirmed exactly.
+
+**Minimal reproduction** (`tests/concurrency/webhook.test.ts`): deliver
+`charge.refunded` for an intent, then `payment_intent.succeeded` for the same
+intent.
+
+```
+[out-of-order events] refunded-then-succeeded left status=PAID paidAt=true
+```
+
+The refund's `updateMany` matches nothing (the order is still `PENDING` when it
+arrives), and the succeeded event then writes `PAID`. The order is `PAID`
+forever for money that has been returned; the pick list will hand out a snack
+that was refunded. The reverse order works correctly (also asserted), so this is
+purely an ordering assumption. There is no timestamp or event-sequence check
+anywhere.
+
+**Severity: high.** Stripe explicitly does not guarantee ordering.
+
+### 34. [qa/backend — HIGH, new] The deadlock test everyone has been writing is a false green
+
+**What broke.** Nothing in the product — but qa.md's own reverse-cart test, and
+the one item 21 asks to be kept, **passes with the `.sort()` deleted**. I
+deleted it and measured:
+
+- 20 carts on **one** slot, same two products in opposite order, sort removed:
+  **20/20 succeeded, zero deadlocks.**
+
+The reason: `book_slot` takes the slot row lock *first*, so two carts in the same
+pickup window are serialised before they ever touch a product. An ABBA deadlock
+between them is impossible, and the sort is unreachable as a defence in that
+scenario. The test proves nothing.
+
+The case that does exercise it is **two different pickup windows** holding the
+same two products — Lunch A and Lunch B both selling the same chips and the same
+juice, which is the normal shape of a school day. With that fixture, 60 carts
+(30 per window, reversed):
+
+- sort removed → **6 of 60 returned `INTERNAL` 500**, server log recorded
+  `deadlock detected` / `40P01`.
+- sort restored → **60/60 succeeded, zero deadlock lines.**
+
+`tests/concurrency/stock.test.ts` now uses the two-slot fixture and carries that
+measurement in a comment.
+
+**Severity: high (as a test defect).** Anyone "simplifying" this test back to one
+slot silently removes the only coverage of the lock ordering, and item 21's
+instruction to prove it goes red is the reason it was caught.
+
+### 35. [backend — HIGH, new] The `release.ts` lock order is load-bearing, and half of it is currently guarded by an index rather than by code
+
+Item 18.3's fix was verified by the same delete-and-measure method, and it splits
+into two separate claims:
+
+1. **release-versus-checkout on the same slot and products (real, reproduces).**
+   Reversing `lib/db/release.ts` to backend.md §6's order — products first, then
+   the slot — and running 24 releases (2 sweeps + 24 `payment_failed` events)
+   concurrently with 24 fresh checkouts on the same window and products:
+   **18 `INTERNAL` 500s and 28 `deadlock detected` lines.** Restored: **8/8
+   sweep tests pass, zero deadlock lines.** Now covered by
+   "does not deadlock when releases and fresh checkouts share a slot and its
+   products".
+2. **release-versus-release for two orders sharing two products (did NOT
+   reproduce).** Deleting `orderBy: { productId: "asc" }` from `release.ts`
+   changed nothing: eight concurrent releases stayed green. The reason is that
+   `OrderItem` carries `@@unique([orderId, productId])`, so an unordered
+   `findMany` on `orderId` comes back from that index in `productId` ascending
+   order anyway. **The sort is currently redundant because of an index, not
+   because the risk is absent.** Leave it in: if that unique constraint is ever
+   dropped or the query plan changes (a sequential scan returns physical order),
+   the sort is the only thing left. Worth a one-line comment in `release.ts`
+   saying so.
+
+### 36. [manager — MEDIUM] The connection-pool ceiling, measured
+
+Item 21 asked for the number. Against one `next dev` instance and a local
+Postgres, all simultaneous cash checkouts on one slot:
+
+| Concurrency | Result |
+|---|---|
+| 120 | 120 × 200, 1.8 s |
+| 400 | 400 × 200, 6.0 s |
+| 500 | 500 × 200, 7.6 s |
+| 600 | 600 × 200, 8.9 s |
+| **800** | **766 × 200, 34 × 500 (4.3 %), 12.8 s** |
+
+The 800-way failures are exactly the predicted `P2028` (transaction timeout /
+`maxWait` exceeded) surfacing as a bare `INTERNAL` 500 rather than a coded 409 a
+client can recover from. **The books stayed correct at every level** — stock
+down by exactly the number of orders created, `booked_count` equal to it, no
+oversell — so the failure is availability, not correctness.
+
+So: the prediction is confirmed, and the ceiling is between 600 and 800
+in-flight checkouts per instance, which is far beyond one school's lunch rush.
+`tests/concurrency/stock.test.ts` keeps a 120-way regression test that asserts
+zero 500s; the 800-way probe was temporary and is not committed (it would be a
+flaky test on shared CI hardware).
+
+### 37. [backend — HIGH, confirmed] Payment lands after the sweep: money taken, no order
+
+Item 21's "narrow but real" hole, forced rather than waited for
+(`tests/concurrency/sweep.test.ts`): expire a card order, run the sweep, then
+deliver a valid signed `payment_intent.succeeded` for its intent.
+
+Result: order `EXPIRED`, `paidAt` null, stock already given back, webhook logs
+`webhook_noop` and returns 200. The `clientSecret` handed to the browser stays
+usable, so this is reachable any time Stripe or a student's phone is slower than
+the TTL — no setting change needed to make it possible, only to make it likely.
+
+Related, and better than feared: the sweep-versus-late-payment **race** is safe.
+Running `runSweep()` and the succeeded webhook in parallel resolved to `EXPIRED`
+in every observed run, never to a torn state, and the test asserts the full
+invariant for both branches (PAID ⇒ stock still held and seat still booked;
+EXPIRED ⇒ stock and seat returned exactly once and `paidAt` null).
+
+**Not verifiable here:** that `cancelOrderPaymentIntent` runs *before* the
+release in a way that actually prevents the charge — `cancel` is a no-op in
+simulated mode (`pi_sim_` ids never reach Stripe), so only the code order is
+confirmed, not its effect. That needs the P5 live-key transaction.
+
+### 38. [backend — MEDIUM, confirmed (database half)] A retry after a decline is swallowed
+
+`payment_intent.payment_failed` → order `CANCELLED`, stock and seat released
+(verified: 19 → 20, seat 1 → 0, and a second failure event changes nothing).
+A later `payment_intent.succeeded` on the same intent then finds a non-`PENDING`
+order and no-ops: `CANCELLED`, `paidAt` null, `webhook_noop` logged.
+
+Whether Stripe permits confirming an automatic-payment-methods intent after a
+`payment_failed` cannot be established without a real account — that half stays
+open and belongs on the P5 live-transaction checklist.
+
+### 39. [human, escalation — CLAUDE.md §7] Unpaid holds make the daily cap ~unbounded even without the race
+
+Item 21 asked for this to be tested and put in front of a human. Four sequential
+1400c **card** checkouts for one email are all accepted (`PENDING` is excluded
+from the cap aggregate by design), and paying all four with valid webhooks
+leaves **5600c paid for one address against a 1500c cap — 3.7×**. Asserted in
+`tests/concurrency/spendcap.test.ts`.
+
+This is behaving as specified. It is also effectively a change to the spend cap,
+which CLAUDE.md §7 puts on the human escalation list, so the decision is: is the
+cap a limit on *committed* money (today's behaviour) or on *money in flight*?
+
+### 40. [manager — LOW/INFO] Rate limiting: what is actually true
+
+`tests/ratelimit/checkout-limit.test.ts`, server started in `memory` mode:
+
+- The 429 branch executes: the 11th checkout from one IP inside a minute returns
+  429 `RATE_LIMITED`, and the 6th for one email does too. Item 19's request is
+  satisfied — that branch no longer ships unexecuted.
+- **Rotating `x-forwarded-for` defeats the IP limit completely**: 25 checkouts at
+  2.5× the budget, **zero 429s**. Only correct on Vercel, where the edge
+  overwrites the header. If this ever runs behind anything else, the IP limit is
+  decoration and the email limit is the only real one (item 21, confirmed).
+- **Malformed bodies are never counted**: 30 consecutive non-JSON bodies from one
+  IP, 30 × 400, no limiting at any point (item 21, confirmed).
+
+### 41. [manager] Two small requests I could not action myself
+
+1. **`package.json` scripts** (not qa-owned). `test:unit` and `test:concurrency`
+   still work; the new directories have no script. Please add:
+   `"test:api": "vitest run tests/api"`,
+   `"test:ratelimit": "QA_RATE_LIMIT=on vitest run tests/ratelimit"`, and
+   `QA_NO_SERVER=1` in front of `test:unit` so it skips the dev-server boot.
+   `.github/workflows/ci.yml` calls `npx vitest run …` directly so CI does not
+   depend on this.
+2. **One comment in `lib/db/release.ts`** recording finding 35.2 — that the
+   product sort is currently redundant only because of
+   `@@unique([orderId, productId])`, and must not be removed on the evidence of
+   a passing test.
+
+### 42. [manager] What was NOT written, deliberately
+
+- **Playwright E2E (qa.md §5).** `/checkout` and `/order/[orderNumber]` do not
+  exist — frontend is gated on this suite per BUILDPLAN P3 step 2. A spec
+  written against absent pages is either skipped or lying, so there is no
+  `playwright.config.ts` yet. The card/cash confirmation paths *are* covered at
+  the API level (`tests/api/orders.test.ts`): cash reaches `RESERVED` with its
+  pickup code, card reaches `PENDING` without one and flips to `PAID` with one
+  after a signed webhook.
+- **The bundle secret-leak grep (qa.md §6).** Needs `next build`; it belongs with
+  the E2E job and is the next QA task after frontend lands, not part of the P3
+  checkout gate.
+
+### 43. [manager] Tried and found nothing — stated plainly so "green" means something
+
+These were attacked and did **not** break. Listing them so the green is
+auditable rather than asserted:
+
+- Slot capacity: 20 simultaneous checkouts on a capacity-1 window → exactly 1 ×
+  200, 19 × `SLOT_FULL`, `booked_count = 1`, and the 19 losers' stock
+  reservations all rolled back (stock 100 → 99). 60 simultaneous on capacity 5 →
+  exactly 5 orders, `booked_count = 5`, stock −5.
+- Stock: 15 simultaneous for the last unit → exactly 1 × 200, 14 ×
+  `OUT_OF_STOCK`, stock 0, seat 1 (the 14 losers' seats rolled back).
+- Partial-failure rollback: asserted twice, including the case where the failing
+  line is *first in the request* and only sorts second, so a reservation is
+  definitely already on the books when the failure throws. `booked_count`,
+  stock, `orders` and `order_items` all untouched.
+- Webhook: exact-id replay ×3 → one `ok`, two `already processed`, one
+  `order_paid`, one notification, one `webhook_events` row. **Concurrent** triple
+  replay → same. Three *different* event ids for one intent → three dedupe rows,
+  exactly one `order_paid`. Missing signature, wrong secret, and a garbage
+  `stripe-signature` header → 400 with **no** dedupe row and the order untouched.
+  Tampered `amount_received` → stays `PENDING`, `paidAt` null, `expiresAt`
+  cleared (item 18.5 behaving as designed). Orphan intent → 200 + log. Unhandled
+  type → 200.
+- Sweep: 401 with no secret, a wrong secret, and a wrong secret of the *same
+  length* (the constant-time compare). Three concurrent sweeps → exactly one
+  release, stock back once, `{scanned:0,released:0,failed:0}` on the next run.
+  Cash orders with a forced `expiresAt` are never touched. The documented
+  `take: 100` ceiling behaves as documented: 105 stale orders → `scanned:100`
+  then `scanned:5`, all stock recovered.
+- Money: tampered `clientTotalCents` (1 and −99999) ignored, server price
+  charged, `total_mismatch` logged. Negative / zero / fractional / absurd /
+  string / NaN quantities → 400 with nothing moved. Duplicate cart lines → 400.
+  Non-JSON body → 400 with `fields._body`. Inactive product and unknown product
+  id → `PRODUCT_UNAVAILABLE`. Price change mid-cart → charged and snapshotted at
+  the current price, and a later reprice does not rewrite it. Name and rarity
+  snapshots likewise. `total = subtotal + tax` and integer cents held across a
+  10× line. No PII in the checkout response body.
+- Cutoff: a 2020 slot → `PAST_CUTOFF`; 46 minutes out → 200; 44 minutes out →
+  `PAST_CUTOFF` — with the fixture's absolute instant asserted first, across
+  three timezones (item 30). `lib/timezone.ts` unit tests pin PDT/PST, the
+  UTC-getter service-date read, malformed `startTime` throwing, and the school
+  day boundary.
+- Spend cap: the 1400 → 100 → 1 boundary; `KID@School.CA` with whitespace
+  correctly hitting the same bucket as `kid@school.ca`; and the cap window
+  tracking `schoolDayStartInstant` (an order backdated one second before the
+  school's midnight stops counting, one second after it still counts).
+- Receipt endpoint: all seven rejection shapes — no cookie, tampered signature,
+  wrong signing key, correctly-signed-but-expired, **another order's token
+  renamed onto this order's cookie**, another order's cookie under its own name,
+  unknown order number, malformed path segment — return byte-identical
+  `ORDER_NOT_FOUND` 404s, with a control request proving the route really does
+  accept a correctly signed token. `pickupCode` presence asserted as a **key**
+  across all eight statuses. No `studentName` / `email` / `phone` / `homeroom` /
+  `capacity` / `bookedCount` / order id in any response. Cookie flags asserted
+  (`HttpOnly`, `SameSite=Lax`, `Path=/api/orders`, `Max-Age=172800`, no `Secure`
+  in dev). Two receipts from one jar stay readable. Both §27 signals — a stale
+  `PENDING` with a past `expiresAt`, and a frozen `PENDING` with a null one —
+  behave as documented.
+- Allergens: full round trip catalog → snapshot → receipt with the list
+  untruncated; a later product correction does not rewrite history; empty array
+  survives as `[]` and not as a missing key; exclusion on ANY match (single and
+  three-token); exclusion combined with `category`; `MILK` and `dairy` both
+  rejected with 400 rather than silently filtering nothing.
+- Concurrency shape: a 40-way checkout burst interleaved with 25 price updates
+  never produced an order whose `subtotal_cents` disagreed with the sum of its
+  own line snapshots.
+
+### 44. [manager] Not tested, and why — so nobody mistakes this for full coverage
+
+- **Anything against a real Stripe account.** `paymentIntents.create` and
+  `cancel` are simulated (item 20). The webhook path is fully exercised because
+  it is local HMAC, but "does Stripe let a declined intent be retried" (item 38)
+  and "does cancel-before-release actually stop the charge" (item 37) both need
+  the P5 live transaction.
+- **`lib/settings.ts`'s 60-second cache.** Every test relies on the documented
+  defaults with an empty `settings` table, precisely because a test that writes
+  a setting and immediately calls a route is unreliable (item 21). The
+  `pending_order_ttl_minutes = 0` experiment item 21 suggests was not run for the
+  same reason; finding 37 forces the same state directly instead.
+- **The deactivate-mid-checkout race** (product deactivated between the price
+  read and `reserve_stock`, giving `OUT_OF_STOCK` instead of
+  `PRODUCT_UNAVAILABLE`). Cosmetic, and not reachable deterministically without
+  a hook inside the transaction. Still true, still unproven.
+- **A production build.** So the `Secure` cookie, checkout's production
+  fail-closed path, `rate_limit_mode: fail-closed`, and `stripe_mode: live` are
+  reasoned, not observed — same gap backend recorded in item 29.
+- **`upstash` rate-limit mode.** No Redis in this environment; only `memory` and
+  `disabled` have executed.
+- **A real browser.** No cookie handling across an actual Stripe redirect, no
+  keyboard/axe passes, no client bundle grep (item 42).
+- **Order-number collision retry under a real collision.** 600 orders in one slot
+  produced no observed collision, so `withRetryOnUnique`'s retry path is
+  exercised by nothing but its unit-level reasoning. Item 21's warning about the
+  90,000-value space stands; the unit test does assert that 2,000 draws collide.
