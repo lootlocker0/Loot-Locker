@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Plain CommonJS Node CLI scripts, run directly with `node`, not part of
+    // the Next.js app source — the TS/ESM rules below don't apply to them.
+    "scripts/**",
   ]),
 ]);
 
