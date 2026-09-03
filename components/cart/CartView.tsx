@@ -1,93 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { Allergen, Rarity } from "@prisma/client";
 import { useCart } from "@/stores/cart";
 import { rarityMeta } from "@/lib/rarity";
 import { formatCents, sumLines } from "@/lib/money";
 import { AngledPanel } from "@/components/ui/AngledPanel";
 import { ShardButton } from "@/components/ui/ShardButton";
 import { ProductImage } from "@/components/ui/ProductImage";
-
-/**
- * The cart store only holds `{ productId, qty }` — this page needs current
- * price/stock/allergens to render an honest line, so it fetches
- * `GET /api/products` (no filters) client-side rather than trusting anything
- * cached in localStorage. See frontend.md §4 / CLAUDE.md §6.
- */
-type LiveProduct = {
-  id: string;
-  name: string;
-  priceCents: number;
-  rarity: Rarity;
-  allergens: Allergen[];
-  stockQty: number;
-  imageUrl: string;
-};
-
-type FetchState =
-  | { status: "loading" }
-  | { status: "error" }
-  | { status: "ready"; products: Map<string, LiveProduct> };
-
-async function fetchLiveProducts(): Promise<Map<string, LiveProduct>> {
-  const res = await fetch("/api/products", { cache: "no-store" });
-  if (!res.ok) throw new Error(`GET /api/products -> ${res.status}`);
-  const data: { products: LiveProduct[] } = await res.json();
-  return new Map(data.products.map((p) => [p.id, p]));
-}
+import { useLiveProducts } from "@/components/hooks/useLiveProducts";
 
 export function CartView() {
   const lines = useCart((s) => s.lines);
   const setQty = useCart((s) => s.setQty);
   const removeLine = useCart((s) => s.remove);
-  const [state, setState] = useState<FetchState>({ status: "loading" });
-
-  // GET /api/products filters to active + in-stock (docs/API-CONTRACT.md §6),
-  // so stock that sold out since a line was added simply won't come back —
-  // that line renders as unavailable below rather than crashing on a missing
-  // lookup. Refetch on focus so a student who parked on this tab for a while
-  // sees current prices/stock, same reasoning as the checkout slot refresh
-  // in frontend.md §5.
-  //
-  // The fetch/setState pair lives inline in the effect (not behind a
-  // `useCallback`-memoized function called from the effect body) and uses
-  // the standard "ignore" cleanup flag — that's the shape
-  // react-hooks/set-state-in-effect expects for a legitimate mount-time
-  // fetch, as opposed to a `useCallback` ref invoked synchronously from the
-  // effect, which is the cascading-render pattern it actually flags.
-  useEffect(() => {
-    let ignore = false;
-
-    async function run() {
-      try {
-        const products = await fetchLiveProducts();
-        if (!ignore) setState({ status: "ready", products });
-      } catch {
-        if (!ignore) setState({ status: "error" });
-      }
-    }
-
-    run();
-    window.addEventListener("focus", run);
-    return () => {
-      ignore = true;
-      window.removeEventListener("focus", run);
-    };
-  }, []);
-
-  // Retry is a user-initiated event handler, not effect-driven — setState
-  // here is the normal "respond to a click" case, not the mount-fetch case
-  // above.
-  async function retry() {
-    try {
-      const products = await fetchLiveProducts();
-      setState({ status: "ready", products });
-    } catch {
-      setState({ status: "error" });
-    }
-  }
+  // The cart store only holds `{ productId, qty }` — this page needs current
+  // price/stock/allergens to render an honest line, so it reads
+  // `GET /api/products` live rather than trusting anything cached in
+  // localStorage. See CLAUDE.md §6. Shared with the checkout page via
+  // components/hooks/useLiveProducts.
+  const { state, retry } = useLiveProducts();
 
   if (lines.length === 0) {
     return (
@@ -277,9 +208,18 @@ export function CartView() {
           <p className="mt-2 font-mono text-[11px] text-text-faint">
             Tax and the final total are calculated at checkout.
           </p>
-          <ShardButton size="lg" disabled className="mt-6 w-full">
-            Checkout — coming soon
-          </ShardButton>
+          {known.length > 0 ? (
+            <Link
+              href="/checkout"
+              className="clip-shard mt-6 flex w-full items-center justify-center bg-gold px-8 py-3 font-display uppercase tracking-wide text-void transition-transform hover:brightness-110 active:scale-[.97]"
+            >
+              Proceed to extraction
+            </Link>
+          ) : (
+            <ShardButton size="lg" disabled className="mt-6 w-full">
+              Remove unavailable items to continue
+            </ShardButton>
+          )}
         </AngledPanel>
       </div>
     </div>
