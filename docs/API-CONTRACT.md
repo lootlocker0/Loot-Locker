@@ -203,6 +203,22 @@ npx prisma db seed                         # idempotent; safe to re-run
 The SQL file is idempotent, so the qa harness can re-run it against every fresh
 test container.
 
+**Migration `20260903055030_webhook_event_processed_at` (2026-09-03)** adds a
+plain nullable `webhook_events.processed_at`. `migrate deploy` applies it;
+`manual_constraints.sql` is unchanged, because a nullable column needs no
+constraint and the claim protocol is enforced by the handler's conditional
+`UPDATE`, not by the database. Any environment or test database created before
+that date needs a `migrate deploy` before the webhook route will run.
+
+Beyond the checks in the table below, one invariant is held by an explicit lock
+rather than by a constraint: **the daily spend cap**. It is a sum over rows that
+do not exist yet, so no single `UPDATE ... WHERE` can express it the way
+`reserve_stock` does. `POST /api/checkout` therefore takes
+`pg_advisory_xact_lock(hashtextextended(<email>:<school day>, 0))` as the first
+statement of its transaction and re-reads the aggregate under it. The lock is
+released by Postgres at commit or rollback; nothing unlocks it by hand and
+nothing leaks if a process dies mid-checkout.
+
 | Object | Contract |
 |---|---|
 | `book_slot(text) -> boolean` | Claims one seat. `true` = claimed, `false` = full, inactive, or missing |
@@ -532,7 +548,7 @@ until its status flips.
 | `PRODUCT_UNAVAILABLE` | 409 | A `productId` does not exist or the product was deactivated | Refetch the catalog and rebuild the cart |
 | `SPEND_CAP_EXCEEDED` | 409 | This order would push the address past the daily cap. `capCents`, `spentCents` | Terminal for today. Show both numbers |
 | `SLOT_FULL` | 409 | The window filled, was deactivated, or does not exist | Refetch `GET /api/slots` and pick again. **Recoverable** |
-| `PAST_CUTOFF` | 409 | Now is later than `slotStart - order_cutoff_minutes` | Refetch slots; that window is closed. Another may not be |
+| `PAST_CUTOFF` | 409 | Now is later than `slotStart - order_cutoff_minutes`. Checked **before** the spend cap: a closed window is refused whether or not the student also has budget left | Refetch slots; that window is closed. Another may not be |
 | `OUT_OF_STOCK` | 409 | A line could not be reserved. `productName` names it | Refetch the catalog, drop or reduce that line. **Recoverable** |
 | `INTERNAL` | 500 | Database or payment provider failure | Retry **once**. Nothing was charged |
 
@@ -554,6 +570,15 @@ distinguishing them means id-probing tells a scraper nothing.
   back if payment never lands. This is a deliberate trade: an abandoned cart
   briefly hiding a snack is cheaper than charging a student for a snack that is
   not on the shelf.
+- **The daily spend cap holds under concurrency.** It is evaluated inside the
+  checkout transaction, behind a Postgres advisory lock keyed on
+  (lower-cased email + school day), so simultaneous checkouts for one address
+  are serialised and each sees the money the previous one committed. Verified:
+  six simultaneous 300c cash checkouts for one address against the 1500c cap
+  produced five 200s, one `SPEND_CAP_EXCEEDED`, and exactly 1500c committed —
+  previously six 200s and 1800c (`docs/HANDOFF.md` §31). Only the *same* mailbox
+  serialises; twelve concurrent checkouts across twelve mailboxes all succeeded.
+  A client firing `Promise.all` therefore gets 409s, not a bypass — handle them.
 - **`SLOT_FULL` and `OUT_OF_STOCK` are normal, not exceptional.** Under load
   they are the *expected* answer for everyone but the winner. Verified: 20
   simultaneous checkouts against a capacity-1 window produced exactly one 200
@@ -587,7 +612,7 @@ Handled event types:
 | `payment_intent.succeeded` | `PENDING` → `PAID`, sets `paidAt`, clears `expiresAt` |
 | `payment_intent.payment_failed` | `PENDING` → `CANCELLED`, releases the stock and the seat |
 | `payment_intent.canceled` | Same as above |
-| `charge.refunded` | `PAID`/`PACKED` → `REFUNDED`. **Does not** return stock or the slot seat |
+| `charge.refunded` | **Any status except `REFUNDED`** → `REFUNDED`, clears `expiresAt`. **Does not** return stock or the slot seat |
 
 Anything else is logged as `webhook_unhandled` and 200s.
 
@@ -596,24 +621,60 @@ Anything else is logged as `webhook_unhandled` and 200s.
 | Status | Body | Meaning |
 |---|---|---|
 | 200 | `ok` | Processed, or intentionally a no-op |
-| 200 | `already processed` | Replay. The event id was already recorded |
+| 200 | `already processed` | Replay. The event id was already recorded, or a claim on it is trusted as actively in flight |
 | 400 | `missing signature` | No `stripe-signature` header |
 | 400 | `bad signature` | Signature did not verify. Nothing was recorded |
+| 409 | `claim ambiguous, retry` | A claim on this event exists, is unfinished, and is old enough that "in flight" is no longer a safe assumption but not yet old enough to reclaim. **Retryable** — Stripe should and will try again on its normal schedule. Never treat this as a final failure |
 | 500 | `webhook not configured` | `STRIPE_WEBHOOK_SECRET` unset. Refuses rather than skipping verification |
 | 500 | `handler failed` | The dedupe row was deleted so Stripe's retry can reprocess |
 
 **Notes**
 
-- **Replay defence is the primary-key insert on `webhook_events`**, not a
-  check-then-insert. Verified: three simultaneous deliveries of one event id
-  produced one `ok` and two `already processed`, and three simultaneous
-  deliveries with *different* ids for the same intent produced exactly one
-  `order_paid`.
+- **Replay defence is a two-phase claim on `webhook_events`**, not a
+  check-then-insert and no longer a bare insert. Phase one inserts the row with
+  `processedAt = null` — that insert races on the primary key, so of N
+  simultaneous deliveries exactly one proceeds. Phase two sets
+  `processedAt = now()` after the dispatch returns. Only a row with
+  `processedAt` set is a finished event.
+  Verified: three simultaneous deliveries of one event id produced one `ok` and
+  two `already processed`; three simultaneous deliveries with *different* ids
+  for one intent produced exactly one `order_paid`; sequential replay produced
+  `ok`, `already processed`, `already processed`.
+- **A handler that dies mid-dispatch is recovered, not lost** (`docs/HANDOFF.md`
+  §32). A row claimed but not finished for longer than **3 minutes**
+  (`WEBHOOK_CLAIM_STALE_MS`) is considered abandoned — a kill, an OOM or a
+  function timeout — and the next delivery of that event id reclaims it
+  atomically and processes it. **For qa:** a fixture that simulates a crash by
+  pre-inserting a `webhook_events` row must backdate `createdAt` past that
+  window (`now() - interval '10 minutes'`), otherwise it is indistinguishable
+  from a live delivery and is correctly ignored.
+- **A claim's age is split into three bands, not two**, closing a residual gap
+  recorded and resolved in `docs/HANDOFF.md` §32 ("Residual 2"): younger than
+  **10 seconds** (`WEBHOOK_CLAIM_TRUST_MS`) is trusted as genuinely in-flight
+  and answered `already processed` 200 — real dispatch finishes in
+  milliseconds, so this is what keeps concurrent duplicate delivery idempotent.
+  Between 10 seconds and 3 minutes is answered **409** (above), never 200 —
+  telling Stripe an event is handled while there is real doubt is exactly how
+  a crash whose first retry lands inside the old single window got silently
+  lost twice. Past 3 minutes, it reclaims. **For qa:** a test that delays a
+  duplicate delivery past 10 seconds should now expect 409, not 200.
+- **Stripe does not guarantee event ordering, and the handlers no longer assume
+  it does.** `charge.refunded` arriving before `payment_intent.succeeded` takes
+  the order straight to `REFUNDED` (a refund can only exist for a charge that
+  really succeeded), and the later succeeded event finds no `PENDING` order and
+  no-ops. Verified in both directions: refund-then-succeeded and
+  succeeded-then-refund both end at `REFUNDED`. In the reversed case `paidAt`
+  stays null — the payment confirmation never arrived while the order was still
+  claimable, and stamping a fabricated time into a money field would be worse
+  than a null. **Do not treat `paidAt` as "was this ever paid" for a `REFUNDED`
+  order.** A `order_refunded_before_payment` log line marks each occurrence.
 - **A payment whose amount disagrees with the order is refused**, logged as
   `webhook_amount_mismatch`, and the order is frozen out of the sweep
   (`expiresAt` cleared) but left `PENDING` for a human. It never becomes `PAID`.
-- A refund does **not** restock and does **not** free the pickup seat. Staff
-  adjusts inventory by hand (P4).
+- A refund does **not** restock and does **not** free the pickup seat, in any of
+  the transitions above — including the `PENDING` → `REFUNDED` one, where the
+  order never became collectable. Staff adjusts inventory by hand (P4). Erring
+  towards holding stock can never oversell; erring the other way can.
 - Signature verification is local HMAC. Tests can drive this route with
   `stripe.webhooks.generateTestHeaderString({ payload, secret })` and no Stripe
   account — see `docs/HANDOFF.md`.
@@ -821,4 +882,5 @@ Planned, in build order (shipped rows marked):
 | 2026-09-02 | P1 | Manager review: real branded catalog items added to `prisma/seed.ts` (Doritos ×5, Kool-Aid Jammers ×3, chip assortment ×3), `components/ui/rarity.ts` P0 placeholder deleted and `RarityCard` swapped onto the canonical `@prisma/client`/`lib/rarity.ts` types (HANDOFF §5, resolved). Independently re-verified: fresh migrate + constraints + double seed, `tsc --noEmit`, full `eslint .` |
 | 2026-09-03 | P3 | `POST /api/checkout`, `POST /api/webhooks/stripe` and `GET /api/cron/sweep` shipped and documented in §6, plus `lib/codes.ts`, `lib/rate-limit.ts`, `lib/timezone.ts`, `lib/stripe/{client,payments}.ts`, `lib/db/release.ts`, `lib/email.ts`, `checkoutSchema` in `lib/validation.ts`, and `vercel.json`. **Card and cash are both live** (manager decision, resolving BUILDPLAN.md's open item). The timezone bug from HANDOFF §3/§13 is fixed at both call sites: `lib/timezone.ts` pins `America/Vancouver`, the cutoff derives the slot's real instant from it, and `GET /api/slots` now floors "today" on the school's calendar day — at 00:25 UTC the old code returned 18 slots and dropped the school's current afternoon; it returns 21. Deviations from backend.md, all hardenings, are listed in `HANDOFF.md` §18. Verified against the seeded dev database: cash order lands `RESERVED` with stock and `booked_count` decremented, partial-failure rollback leaves nothing behind, 20-way slot and stock races produce exactly one winner, signed webhook flips the order to `PAID`, replay and concurrent triple replay are no-ops, a tampered `amount_received` is refused, a decline releases stock and seat, and the sweep expires and restocks an aged order and is a no-op on the second run |
 | 2026-09-03 | P3 | `GET /api/orders/[orderNumber]` shipped and documented in §6, unblocking the confirmation page (`HANDOFF.md` §22, resolved by the manager in favour of option 3). Added `lib/order-session.ts`, the `ORDER_NOT_FOUND` code in `lib/errors.ts`, and the `ORDER_SESSION_SECRET` environment variable; `POST /api/checkout` now sets a signed, httpOnly, per-order cookie (`ll_ord_<orderNumber>`, `Path=/api/orders`, 48 h) on both the cash and card responses and refuses up front if the signing secret is missing in production. The response carries status, the three amounts, the line snapshots including full allergens, the pickup window's label/time/location/date, and the pickup code **only** for `RESERVED` or `PAID`; it carries no student name, email, phone or homeroom. Verified end to end against the dev database: cash order readable with its code, card order readable while `PENDING` **without** a code and with one after a signed `payment_intent.succeeded`, an expired order readable as `EXPIRED` with no code, and no cookie / tampered signature / wrong signing key / expired token / a different order's cookie renamed onto this order all returning the identical `ORDER_NOT_FOUND` |
+| 2026-09-03 | P3 | Three confirmed concurrency bugs fixed (`HANDOFF.md` §31, §32, §33), no endpoint signature changed. (1) The daily spend cap moved inside the checkout transaction behind a per-(email, school day) `pg_advisory_xact_lock`; six concurrent 300c checkouts for one address against the 1500c cap now commit 1500c, not 1800c, and the sequential 5-accepted/1-refused case and the exact-boundary case are unchanged. Consequence for clients: `PAST_CUTOFF` is now evaluated before `SPEND_CAP_EXCEEDED` when both apply. (2) `webhook_events` gained a nullable `processed_at` (migration `20260903055030_webhook_event_processed_at`) and the route became a two-phase claim: a claim left unfinished for more than 3 minutes is reclaimed and reprocessed, so a killed handler no longer answers `already processed` forever for a payment it never recorded, while a claim younger than that is still trusted and concurrent duplicate delivery stays idempotent. (3) `charge.refunded` now transitions any non-`REFUNDED` order to `REFUNDED` and clears `expiresAt`, so an out-of-order refund no longer strands the order at `PAID`; `paidAt` is deliberately not fabricated in that case. Verified against a dedicated Postgres database over real HTTP, and the full qa suite re-run: 75 passed, plus the two `it.fails` markers for §31 and §33 now reporting "expected to fail but passed" |
 | 2026-09-02 | P2 | `GET /api/products` and `GET /api/slots` shipped and documented in §6. `lib/validation.ts` added with `productQuerySchema` (`checkoutSchema` follows in P3, deliberately not stubbed). Two hardenings over the spec sketch, both noted in `HANDOFF.md` §P2: `excludeAllergens` tokens are validated against the `Allergen` enum instead of passed through as free strings, and a bad query param returns `INVALID_INPUT` instead of an unhandled `ZodError`. Verified against the seeded dev database with curl in both `next dev` and `next build && next start` — allergen exclusion confirmed to drop a product on ANY match (`PEANUTS` removes Trail Mix Bag, whose list is `PEANUTS`/`TREE_NUTS`/`SOY`), `remaining`/`full` confirmed against `book_slot()`-modified counts, `Cache-Control: no-store` confirmed on both, both routes confirmed `ƒ` (dynamic) in the production build |

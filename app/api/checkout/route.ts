@@ -25,10 +25,10 @@ export const dynamic = "force-dynamic";
 //   1. validate            reject before touching anything
 //   2. rate limit          per IP and per email
 //   3. reprice from the DB the client's total is evidence, never input
-//   4. daily spend cap
-//   5. cutoff              in the school's timezone, not the server's
-//   6. TRANSACTION         book_slot -> reserve_stock (sorted) -> create order
-//   7. payment             cash is already done; card opens a PaymentIntent
+//   4. cutoff              in the school's timezone, not the server's
+//   5. TRANSACTION         advisory lock (email+day) -> daily spend cap
+//                          -> book_slot -> reserve_stock (sorted) -> create order
+//   6. payment             cash is already done; card opens a PaymentIntent
 //
 // Stock is reserved BEFORE payment on purpose. A student who abandons checkout
 // holds stock until `expiresAt` and the sweep gives it back. The alternative —
@@ -130,31 +130,16 @@ export async function POST(req: NextRequest) {
       // item while a cart was open.
     }
 
-    // ── 4. Daily spend cap. ───────────────────────────────────────────────────
+    // The daily spend cap is checked inside the transaction below, not here.
+    // See the comment on the advisory lock: a check outside the transaction is
+    // a read-then-write and six concurrent carts for one address all pass it.
     const cap = await getSetting("daily_spend_cap_cents");
     // The school's midnight, not the server's. On a UTC server, server-local
     // midnight is 17:00 the previous afternoon in Vancouver, which would reset
     // a child's daily limit in the middle of the school day.
     const startOfDay = schoolDayStartInstant();
 
-    const spent = await db.order.aggregate({
-      _sum: { totalCents: true },
-      where: {
-        email: input.email,
-        createdAt: { gte: startOfDay },
-        status: { in: ["PAID", "RESERVED", "PACKED", "PICKED_UP"] },
-      },
-    });
-    const spentCents = spent._sum.totalCents ?? 0;
-
-    if (spentCents + totalCents > cap) {
-      throw new AppError("SPEND_CAP_EXCEEDED", {
-        capCents: cap,
-        spentCents,
-      });
-    }
-
-    // ── 5. Cutoff. ────────────────────────────────────────────────────────────
+    // ── 4. Cutoff. ────────────────────────────────────────────────────────────
     const slot = await db.pickupSlot.findUnique({
       where: { id: input.slotId },
       select: { id: true, active: true, serviceDate: true, startTime: true },
@@ -172,8 +157,13 @@ export async function POST(req: NextRequest) {
       throw new AppError("PAST_CUTOFF");
     }
 
-    // ── 6. The transaction. ───────────────────────────────────────────────────
+    // ── 5. The transaction. ───────────────────────────────────────────────────
     const ttlMin = await getSetting("pending_order_ttl_minutes");
+    // The advisory-lock key: one mailbox, one school day. Hashed in Postgres by
+    // hashtextextended() rather than in JS so the key is derived the same way
+    // from every process and every runtime version, and so a child's address
+    // never becomes a value we carry around ourselves.
+    const capLockKey = `${input.email}:${startOfDay.toISOString()}`;
     // Cash orders are RESERVED the moment they exist; see the note at the
     // creation call below.
     const isCard = input.paymentMethod === "CARD";
@@ -181,6 +171,53 @@ export async function POST(req: NextRequest) {
     const order = await withRetryOnUnique(() =>
       db.$transaction(
         async (tx) => {
+          // ── 5a. Serialise this mailbox for the rest of the transaction. ─────
+          // docs/HANDOFF.md §31: without this, six simultaneous 300c checkouts
+          // for one address against a 1500c cap all aggregated `spent = 0`, all
+          // passed, and all committed — 1800c. There is no `reserve_spend()` the
+          // way there is a `reserve_stock()`, because the cap is a sum over rows
+          // that do not exist yet; a single UPDATE ... WHERE cannot express it.
+          // So the lock is explicit instead.
+          //
+          // pg_advisory_xact_lock is released by Postgres at commit OR rollback,
+          // and the commit is recorded before the lock is released — so the next
+          // holder's aggregate (a fresh READ COMMITTED snapshot, taken after the
+          // lock is granted) always sees the previous holder's committed order.
+          // Nothing to unlock by hand, and nothing leaks if this process dies.
+          //
+          // Taken FIRST, before book_slot and reserve_stock, for two reasons:
+          // the cap is the cheapest failure and should not cost a seat and a
+          // stock decrement to discover, and taking it before any row lock keeps
+          // one global lock order (mailbox → slot → products ascending) that
+          // cannot deadlock against lib/db/release.ts.
+          //
+          // It serialises one mailbox on one day and nothing else. Two different
+          // students hash to different keys and never wait on each other, so
+          // this is not a lunch-rush bottleneck.
+          await tx.$executeRaw`
+            SELECT pg_advisory_xact_lock(hashtextextended(${capLockKey}, 0))
+          `;
+
+          // ── 5b. Daily spend cap, re-read under the lock. ────────────────────
+          // PENDING is deliberately excluded: an abandoned cart must not block
+          // re-ordering for fifteen minutes. The known consequence — unpaid
+          // holds are unbounded — is docs/HANDOFF.md §39, resolved by the human.
+          const spent = await tx.order.aggregate({
+            _sum: { totalCents: true },
+            where: {
+              email: input.email,
+              createdAt: { gte: startOfDay },
+              status: { in: ["PAID", "RESERVED", "PACKED", "PICKED_UP"] },
+            },
+          });
+          const spentCents = spent._sum.totalCents ?? 0;
+
+          if (spentCents + totalCents > cap) {
+            // Rolls back a transaction that has taken nothing but the advisory
+            // lock, which is exactly why this check runs first.
+            throw new AppError("SPEND_CAP_EXCEEDED", { capCents: cap, spentCents });
+          }
+
           // Atomic slot booking. The WHERE clause does the capacity check in the
           // same statement as the write — an app-level `if (booked < capacity)`
           // reads outside the lock and loses this race every time.
@@ -261,7 +298,7 @@ export async function POST(req: NextRequest) {
     // aborted" rather than a fresh code. Retrying the transaction is safe
     // because the failed attempt rolled its seat and stock back with it.
 
-    // ── 7a. CASH — no Stripe involved at any point. ───────────────────────────
+    // ── 6a. CASH — no Stripe involved at any point. ───────────────────────────
     if (!isCard) {
       // Not awaited into the response path in a way that can fail the order: the
       // reservation is already committed and durable. (Delivery is not built —
@@ -285,7 +322,7 @@ export async function POST(req: NextRequest) {
       return res;
     }
 
-    // ── 7b. CARD — open a PaymentIntent, idempotent on the order id. ──────────
+    // ── 6b. CARD — open a PaymentIntent, idempotent on the order id. ──────────
     let intent;
     try {
       intent = await createOrderPaymentIntent({

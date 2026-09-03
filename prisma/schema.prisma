@@ -284,10 +284,28 @@ model OrderItem {
 /// the primary key: the insert itself is the deduplication, so concurrent
 /// deliveries of the same event race on a unique violation instead of on a
 /// check-then-insert that both sides win.
+///
+/// The row is a two-phase claim, not a tombstone (docs/HANDOFF.md §32):
+///
+///   insert (processedAt = null)  "I am handling this event, right now"
+///   update (processedAt = now()) "this event is finished, never do it again"
+///
+/// A row with `processedAt = null` is therefore a claim in flight. If the
+/// process holding it dies — OOM, function timeout, `kill -9` — nothing ever
+/// deletes the row, and a one-phase design answers `already processed` to every
+/// Stripe retry for a payment that was never recorded. The handler reclaims a
+/// claim older than WEBHOOK_CLAIM_STALE_MS (app/api/webhooks/stripe/route.ts)
+/// and reprocesses it, which is safe because every handler is idempotent.
 model WebhookEvent {
   id   String @id
   type String
 
+  /// Null = claimed but not finished. Set once the dispatch returned without
+  /// throwing. Only the webhook route writes it.
+  processedAt DateTime? @map("processed_at")
+
+  /// Also the claim's age. Rewritten by a successful reclaim so two processes
+  /// cannot reclaim the same stale row and both dispatch it.
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([createdAt])

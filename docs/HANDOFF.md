@@ -1040,7 +1040,60 @@ npx vitest run tests/concurrency tests/api
 QA_RATE_LIMIT=on npx vitest run tests/ratelimit
 ```
 
-### 31. [backend — CRITICAL, confirmed] The daily spend cap does not exist under concurrency
+### ~~31. [backend — CRITICAL, confirmed] The daily spend cap does not exist under concurrency~~ RESOLVED (backend, 2026-09-03)
+
+**Fixed (backend, 2026-09-03).** The cap check moved out of step 4 and into the checkout transaction in
+`app/api/checkout/route.ts`, as its **first** statement:
+
+```sql
+SELECT pg_advisory_xact_lock(hashtextextended($1, 0))   -- $1 = "<email>:<school day ISO>"
+```
+
+then the `spent` aggregate is re-read under that lock, and
+`SPEND_CAP_EXCEEDED` rolls back a transaction that is holding nothing else.
+There is still no `reserve_spend()` because there cannot be one — the cap is a
+sum over rows that do not exist yet, which no single `UPDATE ... WHERE` can
+express. The lock is what makes the read-then-write safe. It is released by
+Postgres at commit *or* rollback (and the commit is recorded before the release,
+so the next holder's fresh READ COMMITTED snapshot sees it), so nothing unlocks
+by hand and nothing leaks if a process dies mid-checkout.
+
+Taken before `book_slot`, deliberately, for two reasons: the cap is the cheapest
+failure and should not cost a seat and a stock decrement to discover, and taking
+it before any row lock keeps one global lock order — mailbox, then slot, then
+products ascending — which cannot deadlock against `lib/db/release.ts`.
+
+**Verified** (dedicated `looplockers_verify` database, real HTTP against
+`next dev`, rate limiting off):
+
+```
+[spend-cap race] 6x300c concurrent for one email: accepted=5 capped=1 committedCents=1500 capCents=1500 in 499ms
+[spend-cap sequential] accepted=5 committedCents=1500 lastError={"code":"SPEND_CAP_EXCEEDED",...,"capCents":1500,"spentCents":1500}
+[spend-cap boundary] 1400=200 100=200 1=409 committedCents=1500
+[different emails] 12 concurrent 1400c across 12 mailboxes: accepted=12/12 in 219ms
+[one mailbox]      12 concurrent 1400c on ONE mailbox: accepted=1/12 capped=11 committedCents=1400
+```
+
+The measured number qa reported (6 accepted, 1800c) is now 5 accepted, 1500c.
+Only the same mailbox serialises: twelve different students checking out
+simultaneously all succeeded, so this is not a lunch-rush bottleneck.
+qa's `it.fails` in `tests/concurrency/spendcap.test.ts` now reports **"expected
+to fail but passed"** and should be converted to a normal `it`.
+
+**Still true, unchanged, and NOT part of this fix** (all pre-existing item 21
+notes): `PENDING` is still excluded from the aggregate (item 39, human decision);
+the cap still matches `email` exactly, so `a.b+lunch@` and `ab@` are two buckets
+*and two different advisory-lock keys*; `getSetting` still caches the cap for 60
+seconds per process, so a lowered cap takes up to a minute to bite.
+
+**New attack surface, for qa.** The lock is held for the whole transaction, so
+one mailbox's checkouts are now strictly serial. Fire 50 concurrent checkouts
+for one address and confirm they queue rather than time out — if the per-mailbox
+queue ever exceeds the 5s `maxWait`, the tail returns `INTERNAL` 500 instead of a
+coded 409. Under the per-email rate limit (5/min) this is unreachable in
+production, but the concurrency suite runs with limiting off and can reach it.
+
+qa's original report, kept for the record:
 
 **What broke.** Item 21's prediction is exactly right, and it is worse than "a
 student spends 2× the cap": the cap is not a cap at all against a client that
@@ -1067,7 +1120,7 @@ is no `reserve_spend()` the way there is a `reserve_stock()`. The test is
 (`committed <= cap`); when a fix lands it will report "expected to fail but
 passed" and must be converted to a normal `it`.
 
-### 32. [backend — CRITICAL, confirmed] A crashed webhook handler loses the payment permanently
+### ~~32. [backend — CRITICAL, confirmed] A crashed webhook handler loses the payment permanently~~ RESOLVED (backend, 2026-09-03)
 
 **What broke.** Item 21's "worst failure mode in P3", reproduced. The dedupe row
 is inserted before dispatch and only deleted on a *thrown* error, so a kill, an
@@ -1096,7 +1149,117 @@ trace is that no `order_paid` line was ever written.** Nothing alerts.
 N minutes) — a schema change, so it is a backend + manager decision, not a
 test-side workaround.
 
-### 33. [backend — HIGH, confirmed] Out-of-order Stripe events strand a refunded order at PAID
+**Fixed (backend, 2026-09-03).** The two-phase claim, as described.
+
+- **Schema.** `WebhookEvent.processedAt DateTime?` (`processed_at`), migration
+  `20260903055030_webhook_event_processed_at`, applied to the dev database and
+  verified as a plain nullable column. `manual_constraints.sql` needed no change:
+  there is no new constraint, because the protocol is enforced by a conditional
+  `UPDATE`, not by the database. **Every existing database — including
+  `looplockers_test` and CI — needs `prisma migrate deploy` before the webhook
+  route will run.**
+- **Route** (`app/api/webhooks/stripe/route.ts`, `claimWebhookEvent`). Insert
+  with `processedAt = null` = "I am handling this now". On `P2002`: read the row;
+  `processedAt` set → genuine replay, `already processed`; `processedAt` null and
+  `createdAt` newer than the staleness window → somebody is plausibly mid-flight,
+  `already processed`, trust them; `processedAt` null and older → reclaim with
+  `updateMany({ where: { id, processedAt: null, createdAt: { lt: staleBefore } },
+  data: { createdAt: now } })` and dispatch if and only if `count === 1`. The
+  conditional update is the lock, exactly as in `releaseOrder`. After a
+  successful dispatch, `processedAt = now()`. A thrown handler still deletes the
+  row, so an ordinary failure is retried immediately rather than waiting out the
+  window. One narrow extra case is handled: if the row vanishes between the
+  failed insert and the read (a failing handler deleted it), the insert is
+  attempted once more instead of being reported as a duplicate.
+- **The staleness window is 3 minutes** (`WEBHOOK_CLAIM_STALE_MS`). Lower bound:
+  it must exceed anything this handler can take, whose slowest path is
+  `releaseOrder` at `maxWait` 5s + `timeout` 15s, plus a cold start — so 3
+  minutes is ~6× the worst case and a live request is never mistaken for a
+  corpse. Upper bound: Stripe's retry cadence backs off from minutes to hours, so
+  the first retry after a crash lands outside the window and recovery costs one
+  retry, not a day of them. It sits nearer the lower bound because the two
+  failure directions are asymmetric: too long only delays recovery, too short
+  risks two processes dispatching one event. Every handler is idempotent, so even
+  that is survivable — but "survivable" is not the bar for money.
+
+**Verified** (dedicated `looplockers_verify` database, real signed webhooks over
+HTTP; the crash is reproduced exactly as qa did it, by writing the row a killed
+process would have left behind):
+
+```
+[A normal]            response=200 "ok" order=PAID processed_at=set
+[B replay x3]         ["ok","already processed","already processed"] paid=true
+[C stale claim]       before=PENDING response=200 "ok" after=PAID paid_at=set expires_at=NULL processed_at=set
+[C retry after recovery] "already processed" order=PAID
+[D fresh claim]       response=200 "already processed" order=PENDING
+[E concurrent x3]     ["already processed","already processed","ok"] rows=1 order=PAID
+[F reclaim race]      ["already processed","already processed","ok"] order=PAID
+```
+
+C is the bug: a row inserted with `created_at = now() - interval '10 minutes'`
+and `processed_at = NULL` is now reclaimed and the payment is recorded, where it
+previously answered `already processed` forever. D is the case that must not
+regress and did not. F races three deliveries at one stale row and exactly one
+wins (`webhook_claim_reclaimed` once, `webhook_reclaim_lost` once).
+
+**qa: your `it.fails` for this one still fails, and correctly so.**
+`tests/concurrency/webhook.test.ts` creates the poisoned row with a **default
+`createdAt`**, i.e. `now()`, which is by design indistinguishable from a delivery
+that is still in flight — reclaiming that would break the concurrent-duplicate
+case in the same file. To assert the fix, backdate the fixture past the window:
+
+```ts
+await testDb.webhookEvent.create({
+  data: {
+    id: "evt_crashed",
+    type: "payment_intent.succeeded",
+    createdAt: new Date(Date.now() - 10 * 60_000), // older than WEBHOOK_CLAIM_STALE_MS
+  },
+});
+```
+
+With that one line the assertion `expect(after.status).toBe("PAID")` holds — it
+is the C row above. Worth keeping the un-backdated version too, asserting
+`already processed` and `PENDING`: that is the D row, and it is the property
+protecting concurrent delivery.
+
+**New log lines to watch (P4 `/admin`):** `webhook_claim_reclaimed` means a
+handler died mid-payment and we recovered; it should be rare and it is the
+signal that something is killing the function. `webhook_reclaim_lost` and
+`webhook_claim_in_flight` are normal contention. `webhook_mark_processed_failed`
+means the work was applied but the row was not marked finished — harmless (the
+next retry reprocesses idempotently) but worth seeing.
+
+**Residual 1, for qa.** The window is time-based, so a handler that hangs for
+more than 3 minutes without dying *can* be double-dispatched by a Stripe retry.
+Both dispatch paths are guarded by conditional updates (`onPaid`'s
+`WHERE status = 'PENDING'`, `releaseOrder`'s), so the second one no-ops rather
+than double-acting — but that is the seam to attack.
+
+**Residual 2 — RESOLVED (manager, 2026-09-03).** Closed with the move backend
+outlined: `claimWebhookEvent` now returns a third outcome, `"ambiguous"`, for a
+claim that is unfinished and older than `WEBHOOK_CLAIM_TRUST_MS` (10s) but not
+yet past `WEBHOOK_CLAIM_STALE_MS` (3min). The route answers that with **409**
+("claim ambiguous, retry"), never 200 — so Stripe is never told an event is
+handled while there is real doubt, and a delivery killed mid-handler is now
+recovered by whichever Stripe retry first lands after the claim ages past
+either boundary: a same-second retry gets 409 and tries again later; a retry
+that arrives once the claim is genuinely stale (past 3 minutes) reclaims and
+actually processes it.
+
+The trust window (10s) is intentionally short: this handler's real dispatch
+finishes in milliseconds, so genuinely concurrent duplicate deliveries — the
+case the original in-flight branch existed to protect — are comfortably inside
+it, while a claim that is *seconds* old and still unfinished is already
+behaving unlike a healthy request. qa's "three simultaneous deliveries → one
+`ok`, two `already processed`" case is unaffected (all three arrive within
+milliseconds); a test that deliberately delays a duplicate delivery past 10s
+would now correctly see 409 instead of 200, and should assert that rather than
+mock it as the old behavior.
+
+`npx tsc --noEmit` and full `npx eslint .` re-verified clean after the change.
+
+### ~~33. [backend — HIGH, confirmed] Out-of-order Stripe events strand a refunded order at PAID~~ RESOLVED (backend, 2026-09-03)
 
 **What broke.** Item 21's prediction, confirmed exactly.
 
@@ -1116,6 +1279,62 @@ purely an ordering assumption. There is no timestamp or event-sequence check
 anywhere.
 
 **Severity: high.** Stripe explicitly does not guarantee ordering.
+
+**Fixed (backend, 2026-09-03).** `onRefunded`'s match widened from
+`status: { in: ["PAID", "PACKED"] }` to `status: { notIn: ["REFUNDED"] }`, and
+it clears `expiresAt` on the way. No new mechanism: this is the same idempotent
+conditional-update pattern as `releaseOrder` and `onPaid`. A second refund event
+for an already-`REFUNDED` order still matches zero rows and no-ops, and
+`onPaid`'s existing `WHERE status = 'PENDING'` guard makes the late succeeded
+event a no-op by itself.
+
+The reasoning that makes the collapse `PENDING` → `REFUNDED` correct rather than
+merely convenient: Stripe cannot refund money it never took, so a real
+`charge.refunded` proves the payment happened *first in real time*, whatever
+order we are told about it in. `REFUNDED` is the right end state either way, so
+we can go there directly instead of waiting for an event that may arrive minutes
+later or (if it is the delivery that crashed) not at all.
+
+**`paidAt` decision: left null in the reversed case, deliberately.** It is
+written by exactly one path — `onPaid`, after the amount check — and stamping it
+in the refund handler would put the instant the *refund* was processed into a
+field that means "when the payment was confirmed". Nothing downstream reads
+`paidAt` (grepped: no route, no lib, no component — only the webhook writes it
+and only tests read it), so nothing needs the value; a null that is honest beats
+a timestamp that is wrong, and Stripe remains the record of when the charge
+happened. The consequence to know about: **for a `REFUNDED` order, `paidAt` is
+no longer a reliable "was this ever paid"** — it is null exactly when the refund
+outran the confirmation. Each occurrence writes a dedicated
+`order_refunded_before_payment` log line, which is what P4's admin screen should
+surface. (The alternative, reading `charge.created`, was rejected: it is not
+present on every refund payload and it would make one field mean two things.)
+
+Stock and the pickup seat are still **not** returned, including on the new
+`PENDING` → `REFUNDED` transition. That is the existing refund rule, and erring
+towards holding stock can never oversell.
+
+**Verified** (dedicated `looplockers_verify` database, real signed webhooks):
+
+```
+[G refund-then-succeeded]  refund=200"ok" after-refund=REFUNDED expires_at=NULL | succeeded=200"ok" FINAL=REFUNDED paid_at=NULL stock=19 seat=1
+[H succeeded-then-refund]  after-paid=PAID paid_at=set FINAL=REFUNDED paid_at=set stock=19 seat=1
+[I double refund]          second refund=200"ok" FINAL=REFUNDED
+[J expired then refunded]  FINAL=REFUNDED
+```
+
+G is qa's exact scenario and now ends `REFUNDED`, not `PAID`; the late succeeded
+event logged `webhook_noop … "status":"REFUNDED"`. H is the forward order, still
+correct. J is a bonus case the widened match now handles: an order the sweep
+already expired, whose payment turned out to have landed and been refunded, no
+longer stays `EXPIRED` while the money round-tripped.
+
+qa's `it.fails` in `tests/concurrency/webhook.test.ts` now reports **"expected to
+fail but passed"** (`[out-of-order events] refunded-then-succeeded left
+status=REFUNDED paidAt=false`) and should be converted to a normal `it`.
+
+**New, for qa.** `charge.refunded` for an intent with no order now logs
+`webhook_orphan_refund` instead of silently updating zero rows — same class of
+silent-money problem as `webhook_orphan_intent`, and P4 should alert on both.
 
 ### 34. [qa/backend — HIGH, new] The deadlock test everyone has been writing is a false green
 
@@ -1386,3 +1605,55 @@ auditable rather than asserted:
   produced no observed collision, so `withRetryOnUnique`'s retry path is
   exercised by nothing but its unit-level reasoning. Item 21's warning about the
   90,000-value space stands; the unit test does assert that 2,000 draws collide.
+
+---
+
+## P3 step 3 — backend (three confirmed concurrency bugs fixed) · 2026-09-03
+
+Items 31, 32 and 33 are struck through above with the fix, the reasoning and the
+measured verification each. Summary, so nobody has to reconstruct it:
+
+`app/api/checkout/route.ts` · `app/api/webhooks/stripe/route.ts` ·
+`prisma/schema.prisma` + migration `20260903055030_webhook_event_processed_at`.
+No test file, component, store or shop page was touched. `npx tsc --noEmit` and
+a full `npx eslint .` are clean.
+
+### 45. [qa] What to re-run, and the one marker that will NOT flip
+
+`npx vitest run tests/concurrency tests/api` after `prisma migrate deploy`
+against `looplockers_test` (the new column is required):
+
+- **§31 spend cap** — `it.fails` now reports "expected to fail but passed"
+  (`accepted=5 capped=1 committedCents=1500`). Convert to a normal `it`.
+- **§33 out-of-order refund** — same, `status=REFUNDED paidAt=false`. Convert.
+- **§32 crashed handler** — **still an expected failure, and that is correct.**
+  The fixture inserts the poisoned row with a default `createdAt`, which the fix
+  deliberately reads as "a delivery that is still in flight" rather than as a
+  corpse; reclaiming it would break the concurrent-duplicate-delivery test three
+  cases above it in the same file. Backdate the fixture's `createdAt` by ten
+  minutes and the assertion holds — the exact patch is in item 32. Keeping both
+  variants is the better coverage: one asserts recovery, one asserts restraint.
+
+Everything else: 75 passed, 0 regressions, plus 25 unit and 5 rate-limit.
+
+### 46. [qa] Where to attack what this pass landed
+
+- **The advisory lock is held for the whole checkout transaction**, so one
+  mailbox is now strictly serial. Push concurrency on a *single* address until
+  the queue exceeds `maxWait` (5s) and see whether the tail degrades to
+  `INTERNAL` 500 instead of a coded 409. The per-email rate limit (5/min) hides
+  this in production; the suite runs with limiting off and can reach it.
+- **Lock order is now mailbox → slot → products ascending.** Item 34's method
+  applies: two pickup windows, the same two products, reversed carts, plus two
+  emails crossed over. If a future change takes the advisory lock anywhere but
+  first, that is an ABBA deadlock against `lib/db/release.ts`.
+- **The 3-minute staleness window is time-based.** A handler that hangs without
+  dying for longer than that can be dispatched twice. Both paths are guarded by
+  conditional updates, so the second should no-op — prove it rather than
+  assuming it.
+- **`charge.refunded` now beats everything except `REFUNDED`.** Deliver it
+  against each status (`RESERVED`, `PACKED`, `PICKED_UP`, `CANCELLED`,
+  `EXPIRED`) and confirm the end state is `REFUNDED` and that stock and
+  `booked_count` are untouched in every one of them. A refunded order still
+  permanently consumes its pickup seat (item 21) — unchanged, and now reachable
+  from more statuses than before.
