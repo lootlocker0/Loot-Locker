@@ -183,4 +183,61 @@ $$;
 COMMENT ON FUNCTION reserve_stock(text, int) IS
   'Atomically decrements product stock. TRUE = reserved, FALSE = insufficient/inactive/missing. Check and write happen in one UPDATE; never replace with a read-then-write.';
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 4. Atomic staff stock adjustment (P4)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Applies a RELATIVE change to a product's stock and returns the new quantity,
+-- or NULL if nothing was changed (product missing, or the change would take
+-- stock below zero).
+--
+-- Same shape and the same reason as reserve_stock(): the bound check and the
+-- write are one UPDATE, so a staff adjustment and a student's checkout landing
+-- in the same millisecond compose instead of clobbering each other. An
+-- application-level `read stockQty, add delta, write` loses that race and
+-- silently un-reserves whatever was reserved in between.
+--
+-- Two deliberate differences from reserve_stock():
+--
+--   · No `active = true` filter. Staff must be able to correct the count on a
+--     product they have just deactivated — that is exactly when a miscount is
+--     discovered — and refusing would leave the number wrong forever.
+--   · Signed delta. A negative delta is a write-off (breakage, a miscount, a
+--     snack eaten by staff) and is bounded by the same stock_qty >= 0 floor,
+--     which is why the check is `stock_qty + p_delta >= 0` and not `>= p_delta`.
+--
+-- It deliberately CANNOT distinguish "no such product" from "would go
+-- negative": both are NULL. The caller re-reads for a human-readable message
+-- only, and that read is diagnostic — the decision was already made here.
+CREATE OR REPLACE FUNCTION adjust_stock(p_product_id text, p_delta int)
+RETURNS int
+LANGUAGE plpgsql
+VOLATILE
+AS $$
+DECLARE
+  v_new int;
+BEGIN
+  -- A zero delta would report success for a write that never happened, which
+  -- is a confusing thing to show someone counting a shelf. Rejected at the
+  -- request boundary too (adminStockAdjustSchema); this function is reachable
+  -- from psql.
+  IF p_delta IS NULL OR p_delta = 0 THEN
+    RETURN NULL;
+  END IF;
+
+  UPDATE products
+     SET stock_qty  = stock_qty + p_delta,
+         updated_at = now()
+   WHERE id = p_product_id
+     AND stock_qty + p_delta >= 0
+  RETURNING stock_qty INTO v_new;
+
+  -- NULL when the UPDATE matched no row.
+  RETURN v_new;
+END;
+$$;
+
+COMMENT ON FUNCTION adjust_stock(text, int) IS
+  'Atomically applies a signed delta to product stock. Returns the new stock_qty, or NULL if the product is missing or the change would go negative. Ignores active. Check and write happen in one UPDATE; never replace with a read-then-write.';
+
 COMMIT;

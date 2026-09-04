@@ -1985,3 +1985,341 @@ pass. No product code involved.
 - **Not covered, unchanged from item 44:** no E2E, no bundle secret grep, no
   real Stripe account, no multi-instance deployment. The sweep's behaviour under
   two *processes* (as opposed to two concurrent requests) is still untested.
+
+---
+
+## P4 — backend (staff admin and ops) · 2026-09-04
+
+Shipped: `POST /api/admin/login`, `POST /api/admin/logout`,
+`GET /api/admin/session`, `GET /api/admin/orders`,
+`POST /api/admin/orders/[orderNumber]/{pack,pickup,cash,refund}`,
+`POST /api/admin/products/[productId]/stock`, plus `lib/admin-session.ts`,
+`lib/db/admin.ts`, the admin schemas in `lib/validation.ts`, seven error codes in
+`lib/errors.ts`, `refundOrderPayment()` in `lib/stripe/payments.ts`, and
+`adjust_stock(text,int)` in `prisma/migrations/manual_constraints.sql`. All eight
+routes are published in `docs/API-CONTRACT.md` §6a. Nothing under
+`app/(shop)/**`, `components/**`, `stores/**` or `tests/**` was touched.
+
+### 53. [human, escalation — CLAUDE.md §7] Staff auth is a SHARED PASSCODE, and that is a placeholder
+
+The task said to ask rather than invent a user-account system, so this is the
+ask. **What is built:** one shared value in `ADMIN_PASSCODE`, exchanged at
+`POST /api/admin/login` for an 8-hour signed cookie. No roster, no per-person
+accounts, no roles.
+
+What that costs, stated plainly so the decision is made with the price visible:
+
+- **The audit log can never say who.** Every admin event carries a random
+  per-sign-in `sessionId`, so the logs can say "the same browser packed these
+  six orders and refunded that one" and can never say whose browser. If the
+  school needs to know which staff member refunded an order — and for money
+  handled by volunteers or students, they usually do — this is not enough.
+- **Revocation is all-or-nothing.** Removing one person's access means changing
+  the passcode for everybody. There is no server-side session store, so
+  `logout` only clears that browser's cookie; a token already copied elsewhere
+  stays valid for up to 8 hours. Rotating `ADMIN_SESSION_SECRET` is the only
+  instant, global revoke.
+- **A shared credential on a shared device gets written on a sticky note.** This
+  is a school cafeteria.
+
+Guard rails that are in place regardless: minimum 8 characters (anything shorter
+is treated as unset and refused, loudly, at boot); **no default and no dev
+fallback in any environment** — an unset passcode means nobody can sign in
+anywhere; login is rate limited per IP *and globally* (see §55); and the
+signing key fails closed in production exactly like `ORDER_SESSION_SECRET`.
+
+**Decision needed:** is a shared passcode acceptable for the people who will
+actually run this service, or does P4 need real accounts before launch? If real
+accounts, that is a schema change (a `StaffUser` model, password hashing, an
+`AdminAction` audit table) and it should land before the frontend builds against
+the current shape, not after. Related open items this decision touches: §54
+(no audit trail), §56 (no cancel/comp route).
+
+### 54. [human/manager] No persistent audit trail, and no free-text notes — deliberately
+
+Every admin action writes a structured log line
+(`admin_order_packed`, `admin_cash_collected`, `admin_order_picked_up`,
+`admin_refund_recorded`, `admin_stock_adjusted`, `admin_login_ok`,
+`admin_login_failed`, `admin_auth_denied`) carrying the order's **cuid**, the
+session id, and amounts. Nothing is written to the database.
+
+I also removed the `reason` free-text field I had first put on the refund and
+stock routes. There is nowhere safe to put one: a staff note is exactly where a
+child's name ends up ("returned by Jamie in 9B"), which then has to be logged or
+stored, and CLAUDE.md §2.6 says no. Accepting the field and silently discarding
+it would have been worse — staff would believe the note was kept.
+
+So: logs are the whole record, they live wherever the platform keeps stdout, and
+they cannot answer "who refunded this". A real `AdminAction` table needs a
+retention answer and a PII decision first (CLAUDE.md §7), which is why it is here
+and not in the code. **When the field comes back it will be stored, not
+discarded.**
+
+### 55. [manager] Judgement calls I made alone, each one flagged rather than buried
+
+None of these changes an invariant; several deviate from the literal task
+wording, and those are marked.
+
+1. **The daily-cash route accepts `PACKED` and `PICKED_UP`, not only `RESERVED`
+   (DEVIATION from the task's "only in `RESERVED` status").** The task's rule
+   makes the real workflow impossible: staff pack bags at 12:00 and take money
+   at 12:15, so by the time coins land the order is `PACKED` and cash could
+   never be recorded against it. `OrderStatus` has one slot and two facts —
+   money in, bag made — so the route writes them separately: `paidAt` is the
+   money fact, `status` is the fulfilment fact, and `PACKED` is never walked
+   backwards to `PAID`. Transitions are `RESERVED → PAID`, `PACKED → PACKED`,
+   `PICKED_UP → PICKED_UP`, all stamping `paidAt`. **Consequence anything
+   downstream must know: for a cash order, `status === "PAID"` is NOT "was this
+   paid" — `paidAt` is.** `PICKED_UP` is in the list only as a recovery path; it
+   is not reachable through the API, because the pickup route refuses an unpaid
+   cash order.
+2. **`POST …/pickup` refuses an unpaid cash order (`CASH_NOT_COLLECTED`), with
+   no override.** Handing over food and taking the money are one action in the
+   world and two writes here. The safer failure is the loud one, and the remedy
+   is one tap. It does mean **a comped or free order is impossible** — see §56.
+3. **`POST …/refund` refuses `CANCELLED` and `EXPIRED`.** This is the direct
+   answer to §50(c): those statuses already had their stock and seat returned by
+   the release path, and the standing instruction "a refund does not restock,
+   adjust by hand" applied to such a row restocks twice and oversells. Because
+   every status the route *does* accept still holds its stock,
+   `stockStillHeld: true` in the response is a fact rather than a default, and
+   `itemsToAdjust` tells staff exactly what to put back. **The webhook path is
+   unchanged** — `charge.refunded` can still take a `CANCELLED`/`EXPIRED` order
+   to `REFUNDED`, so §50(c) is answered for the admin route and still live for a
+   dashboard-initiated refund.
+4. **`releaseSlotSeat` defaults to `false`.** §21 asked P4 for a control over
+   refunded orders permanently consuming pickup capacity; this is it, opt-in
+   rather than automatic. `bookedCount` is physical handout throughput, and a
+   refund at 12:40 does not create staff-time to hand out one more bag —
+   over-booking a window whose bags are already packed is worse than
+   under-reporting a free seat. Honoured only from `PAID`/`PACKED`; a
+   `PICKED_UP` order consumed its throughput for real. **This makes the admin
+   refund behave differently from the Stripe webhook**, which never frees a seat.
+   Deliberate, and worth challenging.
+5. **Stripe is called BEFORE the status is written.** If the write then fails,
+   the money is back and our order still says `PAID` — visibly wrong and
+   self-healing, because `charge.refunded` arrives and fixes it. The reverse
+   order produces an order marked `REFUNDED` for money that never moved, which
+   nothing corrects. `REFUND_FAILED` therefore means nothing was refunded and
+   nothing changed; it is safe to retry.
+6. **Stock adjustment is a signed `delta`, never an absolute quantity.** "Set
+   stock to 7" is a read-then-write with a human in the middle: a checkout that
+   reserves a unit between the shelf count and the submit gets silently
+   un-reserved (CLAUDE.md §2.4). Staff who counted a shelf need the delta
+   computed for them in the UI. If an absolute set is genuinely wanted, say so
+   and I will explain why it should still be refused.
+7. **`GET /api/admin/orders` hides `PENDING` by default.** The response is what
+   gets printed, and a printed pick list containing unpaid card orders is a bag
+   handed to a student who never paid. It is one query param away, and
+   `counts.byStatus` covers *every* order in the window so the seat arithmetic
+   (18 booked, 7 listed) stays explainable.
+8. **`?slotId=` ignores `?date=` instead of intersecting.** A locker screen has
+   one slot id and no reason to also know its calendar day; intersecting answers
+   a mistyped date with an empty screen mid-service.
+9. **Login is rate limited before the body is parsed**, unlike checkout — a
+   hardening, since here the body *is* the guess (§21 flagged the checkout
+   ordering). **The global 60-per-5-minutes bucket is the deliberate one:** there
+   is exactly one credential on this system, so the realistic attack is
+   distributed and a per-IP limit does not slow it at all. It is a DoS surface —
+   burn the bucket and staff cannot sign in mid-service — and the trade is that a
+   lockout is visible and recoverable in minutes where a guessed passcode is
+   neither. Challenge it if you disagree; it is two numbers.
+10. **`SameSite=Lax`, `Path=/`.** Lax is the whole CSRF defence for the POST
+    routes and it holds **only while no `/api/admin` route performs a side effect
+    on a GET** — stated as a contract in API-CONTRACT §6a, because Lax *does*
+    send the cookie on a cross-site top-level GET. `Path=/` (unlike the receipt
+    cookie's `/api/orders`) so the `/admin` page can decide whether to draw a
+    sign-in form; that is a rendering decision, and every route handler checks
+    the session itself.
+11. **Admin error codes are specific**, unlike `ORDER_NOT_FOUND`'s deliberate
+    ambiguity. The caller already holds a session that can list every order for
+    the day, so there is no oracle left to protect, and somebody at a locker
+    needs to know whether to collect money or re-read the code.
+
+### 56. [human/manager] Three ops controls that do NOT exist, and will be asked for
+
+Naming them now so nobody discovers them at 12:15.
+
+- **No cancel route.** An unpaid `RESERVED` cash order — a student who never
+  showed — cannot be cancelled, so it holds its stock and its seat until someone
+  edits the database. Refund refuses it correctly (nothing was paid), and
+  nothing else will touch it: the sweep only looks at `PENDING` card orders. This
+  is the most likely thing to be needed on day one. It is not built because
+  "cancel" has to decide whether stock comes back (yes, probably — unlike a
+  refund, nothing was ever handed over), whether the seat comes back, and
+  whether it still counts against the student's daily cap.
+- **No comp / free-order path.** §55.2 means an unpaid cash order can never be
+  handed over. Whether a staff member may give away stock, and whether it counts
+  against a child's cap, is a policy question (CLAUDE.md §7).
+- **No partial refunds.** Same reason: who may, for what, and does the daily cap
+  get the money back.
+
+Also still absent and inherited: `webhook_orphan_intent`,
+`webhook_amount_mismatch`, `webhook_orphan_refund`, `webhook_claim_reclaimed`
+and `order_refunded_before_payment` are silent-money log lines that §21 and §33
+asked P4's `/admin` to **surface**. This backend does not surface them — they
+are log lines, not rows, and there is no table to read them from. Surfacing them
+properly means either an alerting integration or a persistent event table, which
+is the same schema decision as §54. **A frozen `PENDING` order (`expiresAt:
+null`, §27) is likewise invisible on the pick list unless staff ask for
+`?status=PENDING`.**
+
+### 57. [qa] WHERE TO ATTACK WHAT P4 LANDED
+
+Per the backend definition of done. Everything below is a real hole or a real
+trap in code I just wrote.
+
+**The concurrency case each route is genuinely vulnerable to**
+
+- **`pack`, `pickup`, `cash`, `refund` — the eligibility read is stale.** Each
+  handler reads the order, decides, and then writes with a conditional
+  `updateMany`. The *write* is safe (verified: 15 simultaneous requests to each
+  route give exactly `changed=1, noop=14`), but the **decision** is made on a
+  snapshot. The three places that matters:
+  - `pickup` computes `cashDueCents` from the stale read. Race a
+    `cash` call against a `pickup` and the guard can be evaluated against a
+    `paidAt` that is already set — the handover then proceeds. That is the
+    permissive direction and it is *correct* (the money did arrive), but prove
+    it rather than believe me, and check the reverse: a refund landing between
+    the read and the write must produce `INVALID_STATUS_TRANSITION`, never a
+    handover.
+  - `refund` reads `status` and `paidAt`, calls Stripe, then writes. Money can
+    therefore be refunded for an order that changed status mid-flight; the
+    conditional write then returns `changed: false` while Stripe has genuinely
+    refunded. **Fire a refund and a `charge.refunded` webhook for the same order
+    simultaneously and confirm the end state is exactly one refund, `REFUNDED`,
+    and stock untouched.** This is the highest-value test in P4.
+  - `cash` re-reads after writing to build its response. Two calls racing can
+    both report the same `paidAt` with `changed` split 1/1 — intended, but assert
+    that the timestamp is never rewritten by the loser.
+- **`refund` takes an order row lock then a slot row lock**, matching
+  `lib/db/release.ts` (order → slot → products) and compatible with checkout's
+  global order (mailbox → slot → products). Use §34's method: two windows, the
+  same products, refunds racing fresh checkouts and sweeps. Deleting the
+  ordering should make it go red; if it stays green the test is not concurrent.
+  I ran 20 checkouts against 20 stock adjustments with zero deadlocks, but I did
+  **not** run refunds against releases across two windows.
+- **`adjust_stock` is atomic and I have evidence, not a claim.** 40 simultaneous
+  `+1` calls returned **40 distinct** quantities (32…71) and landed exactly +40;
+  20 concurrent checkouts interleaved with 20 concurrent `+1` adjustments left
+  stock exactly where it started. Attack it by replacing the function body with
+  a read-then-write in a scratch database and proving your test goes red — a
+  test that only checks the final total can pass against a lost update if the
+  timing is kind.
+
+**Everything else worth attacking**
+
+- **`manual_constraints.sql` must be re-run against `looplockers_test` and CI**
+  or the stock route 500s. There is no Prisma migration to force it. This is the
+  single most likely reason a P4 test fails for a reason that is not the code.
+- **The passcode is compared with `timingSafeEqual` over SHA-256 digests**, so
+  neither the value nor its length leaks. But the *login route* short-circuits on
+  `assertAdminConfigured` and on the rate limiter before it ever compares, so an
+  attacker can distinguish "not configured" and "rate limited" from "wrong
+  passcode" by status code — intended (both are 4xx/5xx facts they can see
+  anyway), but worth pinning so a later "improvement" does not make a wrong
+  passcode distinguishable from a valid one.
+- **Cross-secret isolation is load-bearing and is exactly one line in each
+  module.** Verified both ways: an admin-shaped token signed with
+  `ORDER_SESSION_SECRET` does not verify as an admin session, and an admin token
+  does not verify as an order receipt token. Make it a test. The natural future
+  mistake is somebody "simplifying" the two modules onto one key.
+- **The PII projection is the boundary and it is an explicit `select`.** Assert
+  that no admin response, at any nesting level, contains `email`, `phone`, or an
+  order's `id`. I grepped a full pick list: zero `@` characters, zero `email` or
+  `phone` keys, and the only `id` fields are slot ids. A column added in P4b must
+  not leak by default — only a test keeps that true.
+- **Assert on the logs, not just the responses.** I grepped a whole dev-server
+  log after exercising every route for each test student's name, email, phone and
+  pickup code: zero hits. That property is one careless `logEvent` from being
+  false.
+- **Idempotency is asserted on `changed`, not on status.** A route that stopped
+  writing entirely would still return the right status. Assert `changed: true`
+  exactly once across N concurrent calls, and assert the *side effect* (seat
+  decremented once, `paidAt` written once).
+- **`?status=` is validated against the enum** for the same reason
+  `excludeAllergens` is: an unmatched string in a Prisma `in` filters nothing, so
+  the request would look filtered. `?status=NOPE` is a 400 — pin it.
+- **`?date=2026-02-31` is a 400**, not a silent roll-forward to March 3rd. Pin
+  that too; `new Date` does the wrong thing here by default.
+- **The default service date goes through `lib/timezone.ts`.** Run the pick-list
+  test under a non-UTC `TZ` (§17): on a UTC host at 00:30 UTC the school is still
+  on the previous calendar day, and a naive default hands staff tomorrow's empty
+  list for the first seven hours of every UTC day. Verified by hand — the default
+  returned `2026-09-03` while the host clock read 2026-09-04.
+- **Login rate limiting shares `lib/rate-limit.ts`**, so everything in §19 and
+  §40 applies: `memory` mode in CI, per-process, and rotating
+  `x-forwarded-for` defeats the per-IP bucket completely. **The global bucket is
+  the one that still bites** — test that it does, and note that a test which
+  exhausts it will lock out every other test in the same process for 5 minutes.
+  `resetInMemoryRateLimit()` is the escape hatch.
+- **`REFUND_FAILED` has never executed against a real Stripe error.** The
+  simulator (§20) cannot decline a refund. `NO_PAYMENT_INTENT` is reachable by
+  nulling `stripe_payment_intent_id` on a `PAID` card order; `PROVIDER_ERROR` is
+  not reachable here at all and belongs on the P5 live-transaction list, next to
+  the existing "place and refund one real transaction" checkbox.
+- **`alreadyRefundedAtStripe` is likewise untested for real.** It maps Stripe's
+  `charge_already_refunded` to a success, which matters because the
+  `re_<orderId>` idempotency key expires after 24 hours — a refund retried the
+  next day takes that path. Unreachable in simulation.
+- **No admin route except login is rate limited.** Deliberate: they are
+  authenticated, and a limiter on `pack` during a lunch rush is a way to break
+  the service. It does mean one leaked passcode is an unthrottled refund button.
+- **Sessions cannot be revoked individually** (§53). A test that rotates
+  `ADMIN_SESSION_SECRET` mid-run should see every outstanding cookie 401.
+
+### 58. [manager] Verification actually run, so you can judge what is untested
+
+Against the seeded dev Postgres, `next dev`, real HTTP, real cookie jars:
+
+- **A full lunch service, both payment methods.** Cash: `RESERVED` → pack →
+  wrong code (409) → pickup refused for unpaid cash (409, `totalCents: 175`) →
+  record cash (lower-case code accepted, stayed `PACKED`, `paidAt` set) →
+  pickup → `PICKED_UP`. Card: checkout → signed `payment_intent.succeeded` →
+  `PAID` → refund with `releaseSlotSeat: true` → `REFUNDED`, seat 3→2, **stock
+  unchanged**, `stripe_simulated_refund` and `admin_refund_recorded` logged.
+- **Cash before packing**, the other order of operations: `RESERVED` → cash →
+  `PAID` → pack → `PACKED` → refund → `REFUNDED`.
+- **Every refusal:** packing a `PENDING` card order; recording cash against a
+  `CARD` order; refunding a `RESERVED` order, a `PENDING` order, and a `PACKED`
+  but never-paid cash order (`CASH_NOT_COLLECTED`); unknown order number;
+  unauthenticated; tampered cookie. A body carrying `{"amountCents":1}` on the
+  refund route was ignored entirely.
+- **Idempotency, sequentially and concurrently.** Every route returns
+  `changed: false` on a second call. 15 simultaneous calls to `pack`, `cash`,
+  `pickup` and `refund` each produced exactly `changed=1, noop=14, errors=[]`,
+  and the 15-way refund decremented `booked_count` exactly once (6→5).
+- **Stock atomicity.** 40 concurrent `+1` → 40 distinct returned quantities,
+  exactly +40. 40 concurrent `-1` → exactly back. 20 concurrent checkouts
+  interleaved with 20 concurrent `+1` adjustments → stock exactly unchanged,
+  zero deadlock lines, zero 500s. `delta: 0`, `1.5`, `-9999` (would go
+  negative), an unknown product and a malformed product id all rejected with the
+  right code.
+- **Auth.** 401 unauthenticated on every route; wrong passcode 401; malformed
+  login body 400; correct passcode sets
+  `ll_admin=v1.<sid>.<exp>.<mac>; Path=/; Max-Age=28800; HttpOnly; SameSite=lax`
+  (no `Secure`, correct for http dev). Token round-trip, expiry and tamper all
+  verified directly. All four configuration modes: `configured`,
+  `ephemeral-dev`, passcode `unset`, passcode `too-short`, and
+  `unconfigured-production` — the last four all `ADMIN_NOT_CONFIGURED`.
+- **Cross-secret isolation**, both directions, described in §57.
+- **Rate limiting.** 10 × 401 then 429 from one IP; a different IP unaffected;
+  12 malformed bodies → 10 × 400 then 429 (so garbage *is* counted); an existing
+  session unaffected while login is limited.
+- **Pick list.** Grouping, ordering, `counts` vs `listed` (18 booked / 7 listed /
+  10 `PENDING` hidden), `productTotals`, `cashDueCents` at both levels, the
+  allergen union, `?date=`, `?status=`, `?slotId=` overriding `?date=`, unknown
+  params ignored, and 400s for `2026-02-31`, `garbage` and `status=NOPE`.
+- **PII.** A full pick list contained zero `@`, no `email`/`phone` keys, and no
+  order `id`. A full dev-server log contained zero hits for every test student's
+  name, email, phone and pickup code.
+- `npx tsc --noEmit`, full `npx eslint .`, and `npx next build` all clean; all
+  eight admin routes report `ƒ` (Dynamic). `manual_constraints.sql` re-run twice
+  as a no-op. The pre-existing suite re-run green: **106 concurrency+api, 25
+  unit, 0 failures, 0 regressions.**
+
+**Not tested by me, and this is qa's job, not a gap I am hiding:** everything in
+§57. In particular the refund-versus-webhook race, refunds racing releases across
+two windows, `REFUND_FAILED` and `alreadyRefundedAtStripe` against real Stripe, a
+production build (so the `Secure` cookie and the production fail-closed paths are
+reasoned rather than observed), and any of this in a real browser.

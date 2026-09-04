@@ -11,15 +11,20 @@ not stub it.
 **Rule for backend:** an endpoint ships to `main` and to this file in the same
 commit. No exceptions, including "temporary" internal routes.
 
-**Status:** P3 step 1 (checkout, Stripe webhook, expiry sweep) complete, plus the
-confirmation-page read. `GET /api/products`, `GET /api/slots`,
-`POST /api/checkout`, `POST /api/webhooks/stripe`,
-`GET /api/orders/[orderNumber]` and `GET /api/cron/sweep` are live and documented
-in §6. **The confirmation page is unblocked** (`docs/HANDOFF.md` §22 is
-resolved). Everything else in the §6 table is
-still planned and must not be called. The sections below define the conventions every endpoint
-follows, plus the data types and enum values fixed by the database. Later phases
-append to §6 without restructuring anything above it.
+**Status:** P3 complete (checkout, Stripe webhook, expiry sweep, confirmation
+read) and **P4 backend complete** (staff admin). `GET /api/products`,
+`GET /api/slots`, `POST /api/checkout`, `POST /api/webhooks/stripe`,
+`GET /api/orders/[orderNumber]`, `GET /api/cron/sweep` and the eight
+`/api/admin/*` routes are live and documented in §6. **The `/admin` screen is
+unblocked.** The sections below define the conventions every endpoint follows,
+plus the data types and enum values fixed by the database. Later phases append
+to §6 without restructuring anything above it.
+
+> **P4 deployment step, do not skip.** `POST /api/admin/products/[productId]/stock`
+> calls a new SQL function, `adjust_stock`. Re-run
+> `psql "$DATABASE_URL" -f prisma/migrations/manual_constraints.sql` against
+> every database — dev, CI, `looplockers_test`, production — or that one route
+> 500s. There is no Prisma migration; the file is idempotent (§5).
 
 ---
 
@@ -33,7 +38,7 @@ append to §6 without restructuring anything above it.
 | Money | **Integer cents, always.** Field names end in `Cents`. There are no decimal amounts anywhere in this API |
 | Currency | CAD. Not configurable |
 | Dates | ISO 8601 strings in responses |
-| Auth | Public routes are unauthenticated. `GET /api/orders/[orderNumber]` is authorised by the per-order httpOnly cookie that `POST /api/checkout` sets. `/api/cron/*` requires `Authorization: Bearer $CRON_SECRET`. Admin routes (P4) require an admin session |
+| Auth | Public routes are unauthenticated. `GET /api/orders/[orderNumber]` is authorised by the per-order httpOnly cookie that `POST /api/checkout` sets. `/api/cron/*` requires `Authorization: Bearer $CRON_SECRET`. `/api/admin/*` requires the `ll_admin` staff session cookie (§6a) — a **separate secret and separate cookie** from the student one |
 | PII | Never in a path, query string, or redirect. Student name, email, phone and homeroom travel in POST bodies only |
 
 ### Totals
@@ -64,6 +69,7 @@ Branch on `code`, never on `message` — messages are copy and will change.
 | `code` | HTTP | Message | Detail fields |
 |---|---|---|---|
 | `INVALID_INPUT` | 400 | Check the highlighted fields. | `fields`: `{ [fieldName]: string[] }` |
+| `ADMIN_UNAUTHORIZED` | 401 | Staff sign-in required. | — |
 | `PAYMENT_FAILED` | 402 | Payment was declined. | — |
 | `ORDER_NOT_FOUND` | 404 | We couldn't find that order. | — |
 | `PAST_CUTOFF` | 409 | Ordering closed for that pickup time. | — |
@@ -71,8 +77,21 @@ Branch on `code`, never on `message` — messages are copy and will change.
 | `OUT_OF_STOCK` | 409 | An item just sold out. | `productName`: string |
 | `SPEND_CAP_EXCEEDED` | 409 | Daily spending limit reached. | `capCents`, `spentCents` |
 | `PRODUCT_UNAVAILABLE` | 409 | An item is no longer available. | — |
+| `INVALID_STATUS_TRANSITION` | 409 | That order is not in a state where this is allowed. | `status` (current), `expected` (`OrderStatus[]`) |
+| `PICKUP_CODE_MISMATCH` | 409 | That pickup code does not match this order. | — |
+| `CASH_NOT_COLLECTED` | 409 | Cash has not been recorded for this order yet. | `totalCents` |
+| `PAYMENT_METHOD_MISMATCH` | 409 | That action does not apply to this payment method. | `paymentMethod` |
+| `STOCK_ADJUSTMENT_REJECTED` | 409 | That stock adjustment would leave a negative quantity. | `productId`, `stockQty`, `delta` |
 | `RATE_LIMITED` | 429 | Too many attempts. Wait a minute. | — |
 | `INTERNAL` | 500 | Something broke on our end. | — |
+| `REFUND_FAILED` | 502 | The refund could not be completed at the payment provider. | `reason`: `NO_PAYMENT_INTENT` \| `PROVIDER_ERROR` |
+| `ADMIN_NOT_CONFIGURED` | 503 | Staff sign-in is not configured on this server. | — |
+
+The last seven are P4 (staff admin) only. Unlike `ORDER_NOT_FOUND`, they are
+allowed to be specific: the caller already holds a staff session that can list
+every order for the day, so there is no enumeration oracle left to protect, and
+somebody standing at a locker needs to know whether to collect money, re-read
+the code, or fetch a manager.
 
 Source of truth: `lib/errors.ts`. Codes are added there first.
 
@@ -203,6 +222,14 @@ npx prisma db seed                         # idempotent; safe to re-run
 The SQL file is idempotent, so the qa harness can re-run it against every fresh
 test container.
 
+**P4 (2026-09-04)** adds `adjust_stock(text, int)` to
+`manual_constraints.sql`. There is **no Prisma migration** — it is a function,
+not a column — so `migrate deploy` alone does not install it. Re-run the SQL
+file against every database (it is idempotent, and re-running it was verified to
+be a no-op). Until you do,
+`POST /api/admin/products/[productId]/stock` returns `INTERNAL` 500 and nothing
+else changes.
+
 **Migration `20260903055030_webhook_event_processed_at` (2026-09-03)** adds a
 plain nullable `webhook_events.processed_at`. `migrate deploy` applies it;
 `manual_constraints.sql` is unchanged, because a nullable column needs no
@@ -223,6 +250,7 @@ nothing leaks if a process dies mid-checkout.
 |---|---|
 | `book_slot(text) -> boolean` | Claims one seat. `true` = claimed, `false` = full, inactive, or missing |
 | `reserve_stock(text, int) -> boolean` | Reserves N units. `true` = reserved, `false` = insufficient stock, inactive, or missing. A non-positive quantity returns `false` |
+| `adjust_stock(text, int) -> int` | **P4.** Applies a signed delta to stock and returns the new `stock_qty`, or `NULL` if the product is missing or the change would go below zero. Ignores `active` (staff must be able to correct a deactivated product). A zero delta returns `NULL` |
 | `stock_non_negative` | `products.stock_qty >= 0` |
 | `product_price_non_negative` | `products.price_cents >= 0` |
 | `booked_count_non_negative` | `pickup_slots.booked_count >= 0` |
@@ -860,6 +888,598 @@ no client to branch on codes).
 
 ---
 
+## 6a. Staff admin (P4) — `/api/admin/*`
+
+Everything in this section requires a staff session. Nothing in it is reachable
+by a student, and none of it shares a secret, a cookie, or a code path with the
+student-facing confirmation cookie.
+
+### Authentication
+
+| | |
+|---|---|
+| Credential | **One shared passcode**, `ADMIN_PASSCODE`. No staff roster, no per-person accounts — a **placeholder** pending a human decision (`docs/HANDOFF.md` §53) |
+| Session | `ll_admin` cookie: HMAC-SHA256 over `v1.<sessionId>.<expiry>`, signed with `ADMIN_SESSION_SECRET` |
+| Cookie flags | `HttpOnly; SameSite=Lax; Path=/; Max-Age=28800` (8 h), plus `Secure` in production |
+| Scope | Every `/api/admin/*` route. **Not** the student receipt routes, and vice versa |
+
+`ADMIN_SESSION_SECRET` is a **different secret from `ORDER_SESSION_SECRET`**, on
+purpose. Verified both directions: a token minted with one key does not verify
+under the other, and the cookie names (`ll_admin` vs `ll_ord_<orderNumber>`) do
+not collide. A leak in the student receipt path can never become staff access.
+
+**For frontend, this is the whole integration:**
+
+- `POST /api/admin/login` once with the passcode. The cookie is set for you.
+- Every subsequent call is an ordinary same-origin `fetch`. The default
+  `credentials: "same-origin"` sends the cookie; `credentials: "omit"` breaks it.
+- `Path=/`, so unlike the receipt cookie a Server Component **can** read it and
+  decide whether to render a sign-in form. **That is a rendering decision only.**
+  Never treat the presence of the cookie as permission to display data you have
+  not actually fetched — the route handlers are the authorisation boundary and
+  they check it themselves.
+- On any `401 ADMIN_UNAUTHORIZED`, show the sign-in form. It means the session
+  expired, was never there, or the secret was rotated.
+- On `503 ADMIN_NOT_CONFIGURED`, the server has no passcode or no signing
+  secret. Nobody can sign in; this is an ops problem, not a typo. Say so.
+
+**CSRF.** `SameSite=Lax` withholds the cookie from every cross-site POST, and
+that is the entire CSRF defence for these routes. It holds only while the rule
+below holds, so it is stated as a contract and not as an implementation detail:
+
+> **No `/api/admin` route may ever perform a side effect on a `GET`.** Lax
+> *does* send this cookie on a cross-site top-level GET navigation.
+
+**Sessions cannot be revoked individually.** There is no server-side session
+store, so `POST /api/admin/logout` clears the browser's cookie but a token
+already copied elsewhere stays valid until it expires. The only way to revoke
+everything at once is to rotate `ADMIN_SESSION_SECRET`, which invalidates every
+outstanding staff session immediately.
+
+### PII rule for every route in this section
+
+**`studentName` and `homeroom` only. `email` and `phone` appear nowhere, at any
+nesting level, in any admin response.** Staff need to identify a person standing
+at a locker, not contact them, and this list gets printed and left on a table
+(CLAUDE.md §2.6). If a screen genuinely needs to reach a family, request it in
+`HANDOFF.md` — do not assume a field is coming.
+
+The same rule holds in the logs: admin events carry an order's **cuid** and the
+session id, never a name, an email, a phone number or a pickup code. Verified by
+grepping a full dev-server log after exercising every route — zero hits for any
+of them.
+
+---
+
+### `POST /api/admin/login`
+
+**Request**
+
+```json
+{ "passcode": "..." }
+```
+
+Not trimmed — a passcode may legitimately contain spaces, and silently editing
+a credential before comparing it means the value that works is not the value
+that was configured.
+
+**Response 200** — sets the `ll_admin` cookie.
+
+```json
+{ "ok": true, "expiresAt": "2026-09-04T11:42:50.791Z" }
+```
+
+Use `expiresAt` to warn before the session ends rather than dropping a staff
+member out mid-handover with an unexplained 401.
+
+**Errors**
+
+| `code` | HTTP | Cause | Client action |
+|---|---|---|---|
+| `ADMIN_UNAUTHORIZED` | 401 | Wrong passcode | Let them retype it. Do not auto-retry |
+| `INVALID_INPUT` | 400 | Missing/oversized `passcode`, or a body that is not JSON | Fix the form |
+| `RATE_LIMITED` | 429 | Over the login budget | Wait. Do **not** loop |
+| `ADMIN_NOT_CONFIGURED` | 503 | `ADMIN_PASSCODE` or `ADMIN_SESSION_SECRET` unset, or the passcode is shorter than 8 characters | Ops problem. Show it as one |
+
+**Rate limits — 10 per IP per 5 minutes, and 60 globally per 5 minutes.**
+
+The global bucket is the one that matters: there is exactly **one** credential on
+this system, so the realistic attack is a botnet guessing it from ten thousand
+addresses, which a per-IP limit does not slow down at all. The trade is
+deliberate and is recorded in `HANDOFF.md` — an attacker who burns the global
+bucket locks staff out mid-service, and a lockout is visible and recoverable in
+minutes where a guessed passcode is neither.
+
+Unlike `POST /api/checkout`, **the limiter runs before the body is parsed**, so
+malformed bodies are counted too. Verified: 10 × 400 then 429.
+
+---
+
+### `POST /api/admin/logout`
+
+No body. Clears the cookie and returns `{ "ok": true }`. Deliberately does
+**not** require a valid session — an expired or corrupt cookie is exactly the
+state a staff member most needs to be able to clear.
+
+---
+
+### `GET /api/admin/session`
+
+"Am I signed in?" A pure read with no side effect.
+
+**Response 200** — `{ "authenticated": true, "sessionId": "f9f73180e619" }`
+
+`sessionId` identifies a **sign-in, not a person**. It exists so a sequence of
+actions in the logs can be correlated without naming anybody. Do not display it
+as a user identity.
+
+**Errors** — `ADMIN_UNAUTHORIZED` 401, `ADMIN_NOT_CONFIGURED` 503.
+
+---
+
+### `GET /api/admin/orders`
+
+**THE PICK LIST.** One service day, grouped by pickup window, with everything
+needed to pack and hand out bags in a single request — no per-order round trip,
+nothing lazy-loaded, so the page can be printed before service and used with no
+network at the locker (BUILDPLAN P4 gate).
+
+**Request** — query string.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `date` | `YYYY-MM-DD` | today **in the school's timezone** | The school's calendar day. `2026-02-31` is a 400, not a silent roll-forward to March |
+| `slotId` | cuid | — | One window. **When present, `date` is ignored**, so a stale date cannot answer a locker screen with an empty list. The response's `serviceDate` says which day came back |
+| `status` | comma-separated `OrderStatus` | see below | Validated against the enum; `?status=NOPE` is a 400, not an empty filter |
+
+**Default statuses: `RESERVED`, `PAID`, `PACKED`, `PICKED_UP`, `REFUNDED`.**
+
+`PENDING` is **excluded by default and this is deliberate.** An unpaid card order
+holds a seat and stock but may evaporate when the sweep runs, and this response
+is what gets printed — a printed pick list containing unpaid orders is a bag
+handed to a student who never paid. It is one query param away
+(`?status=PENDING`), not unreachable. `CANCELLED` and `EXPIRED` are excluded
+because they released everything they held. `REFUNDED` **is** included: it still
+holds its stock and its seat and staff need it to reconcile the shelf.
+
+**Response 200**
+
+```jsonc
+{
+  "serviceDate": "2026-09-03T00:00:00.000Z",
+  "statuses": ["RESERVED", "PAID", "PACKED", "PICKED_UP", "REFUNDED"],
+  "slots": [
+    {
+      "id": "cmtkqayy9000n5p7dr9r6f8nd",
+      "label": "Lunch A",
+      "startTime": "11:50",              // local wall clock, 24h
+      "location": "Locker bank C",
+      "serviceDate": "2026-09-03T00:00:00.000Z",
+      "active": true,
+      "capacity": 24,
+      "bookedCount": 18,
+      "remaining": 6,
+      "counts": {
+        "total": 18,                     // EVERY order in the window
+        "listed": 7,                     // how many are in `orders` below
+        "byStatus": { "PENDING": 10, "RESERVED": 6, "CANCELLED": 1, "PICKED_UP": 1 }
+      },
+      "cashDueCents": 1075,              // sum over the listed orders
+      "productTotals": [
+        { "productId": "cmt…", "nameSnapshot": "Gummy Bear Pouch",  "qty": 6, "allergens": [] },
+        { "productId": "cmt…", "nameSnapshot": "Sour Rainbow Belts","qty": 1, "allergens": ["SULPHITES"] }
+      ],
+      "orders": [
+        {
+          "orderNumber": "LL-53802",
+          "pickupCode": "PGQC",
+          "studentName": "Test Student",
+          "homeroom": "9B",
+          "status": "RESERVED",
+          "paymentMethod": "CASH_AT_PICKUP",
+          "subtotalCents": 325,
+          "taxCents": 0,
+          "totalCents": 325,
+          "cashDueCents": 325,
+          "paidAt": null,
+          "expiresAt": null,
+          "placedAt": "2026-09-03T12:30:05.793Z",
+          "allergens": ["SULPHITES"],
+          "items": [
+            {
+              "productId": "cmt…",
+              "qty": 1,
+              "nameSnapshot": "Sour Rainbow Belts",
+              "unitPriceCents": 175,
+              "raritySnapshot": "COMMON",
+              "allergensSnapshot": ["SULPHITES"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Slots are ordered by `serviceDate`, `startTime`, `location`. Orders within a
+slot are ordered by `studentName`, then `pickupCode` — a printed sheet is read
+by looking up a name.
+
+**Field notes that change what you render:**
+
+- **`counts` is over EVERY order in the window, `orders` is only the requested
+  statuses.** That is what reconciles a `bookedCount` of 18 against a list of 7:
+  the other 11 are `PENDING`/`CANCELLED`. Show the gap; a staff member who
+  cannot explain why a window looks full will stop trusting the screen.
+- **`order.allergens` is the union across that order's lines**, in canonical
+  enum order — a bag-label warning. It does **not** replace
+  `items[].allergensSnapshot`, which is also returned in full, because the
+  aggregate cannot say *which* item carries the peanuts. **Render both, in full,
+  never truncated, never hover-only** (CLAUDE.md §2.8). This is a printed sheet;
+  there is no hover on paper.
+- **`items[]` are the purchase snapshots**, never the live product (§4). A
+  product renamed or re-priced this morning does not change what a bag packed
+  against yesterday's order says it contains.
+- **`productTotals` is the shelf-pull list** for the window: quantities summed
+  over `RESERVED`, `PAID` and `PACKED` only. `PICKED_UP` is already gone and
+  `REFUNDED` is not being handed to anyone.
+- **`cashDueCents`** (per order and per slot) is integer cents still to collect.
+  It is `0` for every card order and for any cash order already recorded paid.
+- **`pickupCode` is present for every listed order**, unlike the student receipt
+  which withholds it until the order is claimable. Staff are the ones who verify
+  it.
+- **Inactive slots are included.** Deactivating a window does not cancel the
+  orders in it and those bags still have to be handed out. Show `active: false`.
+
+**Errors** — `ADMIN_UNAUTHORIZED` 401, `ADMIN_NOT_CONFIGURED` 503,
+`INVALID_INPUT` 400 (bad `date`, `slotId` or `status`), `INTERNAL` 500.
+
+**Caching** — `Cache-Control: no-store`, route is `force-dynamic`. This is live
+operational state behind a staff cookie; a shared cache keyed on the URL would
+serve one school's children's names and live pickup codes to whoever asked next.
+
+---
+
+### The order action routes — shared behaviour
+
+The next four all take `[orderNumber]` in the path (case-insensitive) and share
+these rules, so they are stated once:
+
+- **Every one of them is idempotent, by a conditional `UPDATE`, not by a check.**
+  The response carries `changed: boolean`. `changed: false` with a 200 means the
+  order was already in that state — a double-pressed button, or a second staff
+  phone — and nothing was written. **Treat it as success.** Verified: 15
+  simultaneous requests to each route produced exactly `changed=1, noop=14`,
+  every time, on every route.
+- **`INVALID_STATUS_TRANSITION` (409) carries `status` and `expected`.** Render
+  both: "this order is `EXPIRED`; this only works from `RESERVED` or `PAID`" is
+  actionable at a locker and "something went wrong" is not.
+- Bodies are JSON. A non-JSON body is `INVALID_INPUT` with `fields._body`.
+- All respond `Cache-Control: no-store`.
+- **Unknown fields in the body are ignored** and can never influence anything.
+  In particular there is no amount field on any of them (see the refund route).
+
+---
+
+### `POST /api/admin/orders/[orderNumber]/pack`
+
+The bag is packed. No student is present and no money moves, so the body is
+empty (`{}`).
+
+**Allowed from `RESERVED` (cash) and `PAID` (card).** Not from `PENDING`: an
+unpaid card order can still expire and hand its stock back, and packing against
+it means a snack off the shelf for an order that is about to stop existing.
+
+**Response 200**
+
+```json
+{
+  "orderNumber": "LL-54795",
+  "status": "PACKED",
+  "changed": true,
+  "allergens": ["SULPHITES"],
+  "cashDueCents": 175,
+  "pickupCode": "WEWP"
+}
+```
+
+`allergens` is repeated here so the confirmation the staff member sees carries
+the warning, not just the list they came from. `cashDueCents` is on this response
+so the amount to collect is on screen **before** the handover, not discovered at
+it.
+
+**Errors** — `ADMIN_UNAUTHORIZED` 401, `ORDER_NOT_FOUND` 404,
+`INVALID_STATUS_TRANSITION` 409, `INTERNAL` 500.
+
+---
+
+### `POST /api/admin/orders/[orderNumber]/pickup`
+
+**The handover.** The bag leaves the locker and goes to a person.
+
+**Request**
+
+```json
+{ "pickupCode": "WEWP" }
+```
+
+**`pickupCode` is required, always.** Trimmed and upper-cased server-side, so a
+scanner or a phone keyboard can send `wewp`. This is the only moment the person
+in front of staff is tied to the bag, and the bag may contain the one snack in
+the building that a different student cannot eat.
+
+**Allowed from `RESERVED`, `PAID`, `PACKED`.**
+
+**Two guards, and both refuse rather than warn:**
+
+1. A wrong code is `PICKUP_CODE_MISMATCH` (409), checked **before** status and
+   money so a wrong code cannot be used to probe what is in the locker.
+2. A cash order with no recorded payment is `CASH_NOT_COLLECTED` (409) with
+   `totalCents`. **There is no override.** Collecting the money and handing over
+   the bag are one action in the real world and two writes here; refusing the
+   second until the first is recorded is what stops "I'll ring it in after
+   lunch" from becoming money nobody can reconstruct. The remedy is one call to
+   the cash route below, which is the thing staff should be doing anyway.
+   A comped or free order is a policy question, not a button (`HANDOFF.md` §53).
+
+**Response 200**
+
+```json
+{
+  "orderNumber": "LL-54795",
+  "status": "PICKED_UP",
+  "changed": true,
+  "cashDueCents": 0,
+  "allergens": ["SULPHITES"]
+}
+```
+
+An order that is already `PICKED_UP` returns `changed: false` **without** the
+cash guard firing — the bag is gone and nothing this route does can un-hand it —
+but `cashDueCents` is still reported so the screen can chase the money.
+
+**Errors** — `ADMIN_UNAUTHORIZED` 401, `ORDER_NOT_FOUND` 404, `INVALID_INPUT`
+400, `PICKUP_CODE_MISMATCH` 409, `CASH_NOT_COLLECTED` 409,
+`INVALID_STATUS_TRANSITION` 409, `INTERNAL` 500.
+
+---
+
+### `POST /api/admin/orders/[orderNumber]/cash`
+
+**Money changes hands.** A student puts coins on the table and this is the only
+record that it happened.
+
+**Request**
+
+```jsonc
+{ "pickupCode": "WEWP" }   // optional; verified when present
+```
+
+Optional here, unlike the handover: staff may take the money while the bag is
+still on the bench, before the student is standing there.
+
+**`CASH_AT_PICKUP` only.** A card order is `PAYMENT_METHOD_MISMATCH` (409) with
+`paymentMethod`, and every underlying `UPDATE` additionally carries
+`paymentMethod = 'CASH_AT_PICKUP'` in its `WHERE` clause. **CLAUDE.md §2.3 — only
+the Stripe webhook writes `PAID` for a card order — is therefore held
+structurally, not by convention:** this route cannot mark a card order paid even
+if it is called with one. A cash order has no payment gateway to be a source of
+truth, so an authenticated staff member at the locker *is* the source of truth,
+and there is nowhere else the fact could come from.
+
+**Allowed from `RESERVED`, `PACKED`, `PICKED_UP`.**
+
+**The status it writes depends on where the order was, and this matters:**
+
+| From | Result |
+|---|---|
+| `RESERVED` | → `PAID`, `paidAt` set |
+| `PACKED` | stays **`PACKED`**, `paidAt` set |
+| `PICKED_UP` | stays **`PICKED_UP`**, `paidAt` set |
+
+`OrderStatus` has one slot and two facts to hold — has the money arrived, and
+has the bag been made — and cash can legitimately be taken before or after
+packing. So `paidAt` is the money fact and `status` is the fulfilment fact, and
+`PACKED` is never walked backwards to `PAID`.
+
+> **Read `paidAt`, not `status === "PAID"`, to decide whether a cash order has
+> been paid.** A `PACKED` cash order can be fully paid. This is the single
+> easiest thing to get wrong on the admin screen.
+
+**Response 200**
+
+```json
+{
+  "orderNumber": "LL-54795",
+  "status": "PACKED",
+  "paidAt": "2026-09-04T03:43:34.274Z",
+  "changed": true,
+  "cashDueCents": 0,
+  "collectedCents": 175
+}
+```
+
+Idempotent on `paidAt`, not on status: a second press returns `changed: false`
+with the **original** timestamp. The record of when the money actually arrived is
+never overwritten.
+
+**Errors** — `ADMIN_UNAUTHORIZED` 401, `ORDER_NOT_FOUND` 404, `INVALID_INPUT`
+400, `PAYMENT_METHOD_MISMATCH` 409, `PICKUP_CODE_MISMATCH` 409,
+`INVALID_STATUS_TRANSITION` 409, `INTERNAL` 500.
+
+---
+
+### `POST /api/admin/orders/[orderNumber]/refund`
+
+**Manual refund.** Money goes back to a family. Card orders go through Stripe;
+cash orders record the fact, since no gateway was involved.
+
+**Request**
+
+```jsonc
+{ "releaseSlotSeat": false }   // optional, default false
+```
+
+**There is no amount field, and there will not be one.** The refund is
+`order.totalCents` as stored — the figure the server itself computed from
+database prices and wrote behind the `order_total_consistent` CHECK constraint
+(CLAUDE.md §2.2). A staff-supplied amount is a client-supplied money value with
+a friendlier name. Any `amountCents` in the body is ignored and can reach
+nothing. **Partial refunds are therefore impossible here**, deliberately: they
+need a policy (who may, for what, and does the daily cap get the money back)
+before they need an endpoint (`HANDOFF.md` §53).
+
+`releaseSlotSeat` gives the pickup window's seat back as well as the money. It
+defaults to **`false`**: `bookedCount` is physical handout throughput, and a
+refund late in a service does not create the staff-time to hand out one more
+bag. Staff who know the window still has room tick it. It is honoured only when
+the bag has **not** been handed over (`PAID`/`PACKED`); a `PICKED_UP` order
+consumed its throughput for real and never gets the seat back.
+
+**Allowed from `PAID`, `PACKED`, `PICKED_UP`.** Already-`REFUNDED` returns
+`changed: false`.
+
+Notably **not** allowed from `CANCELLED` or `EXPIRED`, and this is the direct
+answer to the P4 hazard recorded in `HANDOFF.md` §50(c): those are exactly the
+statuses whose stock and seat were **already** given back by the release path,
+and the standing instruction "a refund does not restock, adjust inventory by
+hand" applied to such a row restocks a second time and oversells. Because every
+status this route accepts still holds its stock, **`stockStillHeld: true` in the
+response is a fact, not a default.** (Stripe's own `charge.refunded` webhook can
+still move a `CANCELLED`/`EXPIRED` order to `REFUNDED`; that path is unchanged
+and is the one to be careful with.)
+
+Not allowed from `RESERVED` either: an unpaid cash order is a cancellation, not
+a refund, and **there is no cancel route yet** (`HANDOFF.md` §53). A cash order
+that was packed but never paid returns `CASH_NOT_COLLECTED` — there is no money
+to send back and saying "refunded" would put a fiction in the books.
+
+**Response 200**
+
+```jsonc
+{
+  "orderNumber": "LL-95291",
+  "status": "REFUNDED",
+  "changed": true,
+  "refundedCents": 175,
+  "paymentMethod": "CARD",
+  "alreadyRefundedAtStripe": false,
+  "stockStillHeld": true,
+  "itemsToAdjust": [
+    {
+      "productId": "cmtlfpsen0001v57dkjtmrxpf",
+      "nameSnapshot": "Sour Rainbow Belts",
+      "qty": 1,
+      "suggestedDelta": 1
+    }
+  ],
+  "slotSeatReleased": true
+}
+```
+
+- **`stockStillHeld` is always `true` from this route.** A refund does **not**
+  restock — the snack may already be packed, damaged or eaten. `itemsToAdjust`
+  is exactly what staff would put back and the `suggestedDelta` to POST to the
+  stock route **if, and only if, it is physically back on the shelf.** Nothing
+  applies it automatically, for exactly that reason. Render this as a prompt,
+  never as a completed action.
+- `alreadyRefundedAtStripe: true` means Stripe reported the charge was already
+  fully refunded, so this call moved no money. The order is still recorded
+  `REFUNDED`, because that is the true state.
+- `slotSeatReleased` reflects what actually happened, not what was asked.
+
+**Ordering, and why a failure looks the way it does.** Stripe is called
+**before** the status is written. If the status write then fails, the money is
+back with the family and our order still says `PAID` — visibly wrong, and
+self-healing, because Stripe's `charge.refunded` webhook arrives and writes
+`REFUNDED`. The reverse order fails the other way: an order marked `REFUNDED`
+for money that never moved, which nothing corrects and nobody notices until a
+parent asks. A `REFUND_FAILED` therefore means **nothing was refunded and
+nothing was changed** — safe to retry.
+
+Concurrent refunds are safe: every attempt reaches Stripe with the same
+idempotency key (`re_<orderId>`), so Stripe creates one refund and returns it to
+all of them, and exactly one then matches the conditional status update.
+Verified: 15 simultaneous refunds produced one refund, one status change, and
+exactly one seat decrement.
+
+**Errors** — `ADMIN_UNAUTHORIZED` 401, `ORDER_NOT_FOUND` 404, `INVALID_INPUT`
+400, `INVALID_STATUS_TRANSITION` 409, `CASH_NOT_COLLECTED` 409, `REFUND_FAILED`
+502 (`reason`: `NO_PAYMENT_INTENT` | `PROVIDER_ERROR`), `INTERNAL` 500.
+
+---
+
+### `POST /api/admin/products/[productId]/stock`
+
+Manual stock correction: a delivery arrived, a box was miscounted, something got
+dropped.
+
+**Request**
+
+```json
+{ "delta": -3 }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `delta` | int | **Signed and relative.** Non-zero, \|delta\| ≤ 10000 |
+
+**There is no absolute "set stock to N", and that is a correctness requirement,
+not an interface preference.** "Set stock to 7" is a read-then-write with a
+human in the middle: staff count the shelf, walk to the tablet, and in between a
+student's checkout reserves a unit — writing 7 silently un-reserves it and the
+shelf oversells (CLAUDE.md §2.4). A delta composes with whatever else happened.
+**Compute the delta for staff in the UI** (they counted 7, the screen showed 9,
+send `-2`); do not ask the API to relax the invariant.
+
+Applied by `adjust_stock()`, which does its bound check and its write in one
+`UPDATE`. Verified: 40 simultaneous `+1` adjustments returned 40 **distinct**
+quantities and landed exactly `+40` — no lost updates. And 20 concurrent
+checkouts interleaved with 20 concurrent `+1` adjustments left stock exactly
+where it started (`-20 +20`), with zero deadlocks.
+
+Works on **inactive** products too — that is exactly when a miscount is
+discovered.
+
+**Response 200**
+
+```json
+{
+  "productId": "cmtlfpsen0001v57dkjtmrxpf",
+  "name": "Sour Rainbow Belts",
+  "stockQty": 31,
+  "delta": -3,
+  "previousStockQty": 34,
+  "active": true,
+  "allergens": ["SULPHITES"]
+}
+```
+
+`stockQty` is authoritative — read out of the same `UPDATE` that made the change,
+so it already includes any concurrent checkout that landed first. It will
+sometimes not equal what the staff member expected, and that is the point; show
+the number, not their arithmetic.
+
+**Errors**
+
+| `code` | HTTP | Cause |
+|---|---|---|
+| `INVALID_INPUT` | 400 | `delta` missing, zero, fractional, or out of range |
+| `ADMIN_UNAUTHORIZED` | 401 | No staff session |
+| `PRODUCT_UNAVAILABLE` | 409 | No such product, or a malformed id |
+| `STOCK_ADJUSTMENT_REJECTED` | 409 | Would leave a negative quantity. Carries `productId`, the current `stockQty` and the `delta` |
+| `INTERNAL` | 500 | Usually: `manual_constraints.sql` has not been re-run, so `adjust_stock` does not exist |
+
+**One hazard staff must be told about, in the UI.** `lib/db/release.ts` restocks
+without a ceiling when a card order expires or a payment fails
+(`HANDOFF.md` §7). If staff hand-adjust for an order that then releases, the
+quantity is added twice and the shelf claims stock that does not exist. Nothing
+in the database prevents it. **Adjust for what is physically on the shelf, not
+for what an order did.**
+
+---
+
 Planned, in build order (shipped rows marked):
 
 | Phase | Endpoint | Purpose | Status |
@@ -870,7 +1490,14 @@ Planned, in build order (shipped rows marked):
 | P3 | `POST /api/webhooks/stripe` | The only writer of `PAID`. Replay-protected | **Shipped** — §6 above |
 | P3 | `GET /api/orders/[orderNumber]` | Confirmation page polling | **Shipped** — §6 above. Authorised by the per-order checkout cookie (`docs/HANDOFF.md` §22, resolved) |
 | P3 | `GET /api/cron/sweep` | Expire unpaid card orders and release what they held | **Shipped** — §6 above |
-| P4 | `/api/admin/*` | Pick list, mark packed, mark picked up, record cash, refund, stock adjustment | Planned |
+| P4 | `POST /api/admin/login` · `POST /api/admin/logout` · `GET /api/admin/session` | Staff sign-in on a shared passcode (placeholder) | **Shipped** — §6a |
+| P4 | `GET /api/admin/orders` | The pick list: one service day grouped by pickup window | **Shipped** — §6a |
+| P4 | `POST /api/admin/orders/[orderNumber]/pack` | Mark packed | **Shipped** — §6a |
+| P4 | `POST /api/admin/orders/[orderNumber]/pickup` | Mark picked up, pickup code verified | **Shipped** — §6a |
+| P4 | `POST /api/admin/orders/[orderNumber]/cash` | Record cash collected on a `CASH_AT_PICKUP` order | **Shipped** — §6a |
+| P4 | `POST /api/admin/orders/[orderNumber]/refund` | Manual refund, amount always recomputed from the order | **Shipped** — §6a |
+| P4 | `POST /api/admin/products/[productId]/stock` | Atomic relative stock adjustment | **Shipped** — §6a |
+| P4b | `/api/inventory/*` | Restricted inventory editor, separate session and separate secret (BUILDPLAN §P4b) | Planned. **Not started** — do not call |
 
 ---
 
@@ -883,4 +1510,5 @@ Planned, in build order (shipped rows marked):
 | 2026-09-03 | P3 | `POST /api/checkout`, `POST /api/webhooks/stripe` and `GET /api/cron/sweep` shipped and documented in §6, plus `lib/codes.ts`, `lib/rate-limit.ts`, `lib/timezone.ts`, `lib/stripe/{client,payments}.ts`, `lib/db/release.ts`, `lib/email.ts`, `checkoutSchema` in `lib/validation.ts`, and `vercel.json`. **Card and cash are both live** (manager decision, resolving BUILDPLAN.md's open item). The timezone bug from HANDOFF §3/§13 is fixed at both call sites: `lib/timezone.ts` pins `America/Vancouver`, the cutoff derives the slot's real instant from it, and `GET /api/slots` now floors "today" on the school's calendar day — at 00:25 UTC the old code returned 18 slots and dropped the school's current afternoon; it returns 21. Deviations from backend.md, all hardenings, are listed in `HANDOFF.md` §18. Verified against the seeded dev database: cash order lands `RESERVED` with stock and `booked_count` decremented, partial-failure rollback leaves nothing behind, 20-way slot and stock races produce exactly one winner, signed webhook flips the order to `PAID`, replay and concurrent triple replay are no-ops, a tampered `amount_received` is refused, a decline releases stock and seat, and the sweep expires and restocks an aged order and is a no-op on the second run |
 | 2026-09-03 | P3 | `GET /api/orders/[orderNumber]` shipped and documented in §6, unblocking the confirmation page (`HANDOFF.md` §22, resolved by the manager in favour of option 3). Added `lib/order-session.ts`, the `ORDER_NOT_FOUND` code in `lib/errors.ts`, and the `ORDER_SESSION_SECRET` environment variable; `POST /api/checkout` now sets a signed, httpOnly, per-order cookie (`ll_ord_<orderNumber>`, `Path=/api/orders`, 48 h) on both the cash and card responses and refuses up front if the signing secret is missing in production. The response carries status, the three amounts, the line snapshots including full allergens, the pickup window's label/time/location/date, and the pickup code **only** for `RESERVED` or `PAID`; it carries no student name, email, phone or homeroom. Verified end to end against the dev database: cash order readable with its code, card order readable while `PENDING` **without** a code and with one after a signed `payment_intent.succeeded`, an expired order readable as `EXPIRED` with no code, and no cookie / tampered signature / wrong signing key / expired token / a different order's cookie renamed onto this order all returning the identical `ORDER_NOT_FOUND` |
 | 2026-09-03 | P3 | Three confirmed concurrency bugs fixed (`HANDOFF.md` §31, §32, §33), no endpoint signature changed. (1) The daily spend cap moved inside the checkout transaction behind a per-(email, school day) `pg_advisory_xact_lock`; six concurrent 300c checkouts for one address against the 1500c cap now commit 1500c, not 1800c, and the sequential 5-accepted/1-refused case and the exact-boundary case are unchanged. Consequence for clients: `PAST_CUTOFF` is now evaluated before `SPEND_CAP_EXCEEDED` when both apply. (2) `webhook_events` gained a nullable `processed_at` (migration `20260903055030_webhook_event_processed_at`) and the route became a two-phase claim: a claim left unfinished for more than 3 minutes is reclaimed and reprocessed, so a killed handler no longer answers `already processed` forever for a payment it never recorded, while a claim younger than that is still trusted and concurrent duplicate delivery stays idempotent. (3) `charge.refunded` now transitions any non-`REFUNDED` order to `REFUNDED` and clears `expiresAt`, so an out-of-order refund no longer strands the order at `PAID`; `paidAt` is deliberately not fabricated in that case. Verified against a dedicated Postgres database over real HTTP, and the full qa suite re-run: 75 passed, plus the two `it.fails` markers for §31 and §33 now reporting "expected to fail but passed" |
+| 2026-09-04 | P4 | **Staff admin backend shipped**, all eight routes documented in the new §6a: `POST /api/admin/login`, `POST /api/admin/logout`, `GET /api/admin/session`, `GET /api/admin/orders`, and `POST` `…/orders/[orderNumber]/{pack,pickup,cash,refund}` and `…/products/[productId]/stock`. Added `lib/admin-session.ts` (HMAC-SHA256 session cookie on its own `ADMIN_SESSION_SECRET`, separate from the student receipt cookie — verified non-interchangeable in both directions), `lib/db/admin.ts`, the admin schemas in `lib/validation.ts`, seven error codes in `lib/errors.ts`, `refundOrderPayment()` in `lib/stripe/payments.ts`, and `adjust_stock(text,int)` in `manual_constraints.sql` (**re-run that file everywhere**; no Prisma migration). New env vars `ADMIN_PASSCODE` (shared staff passcode, **placeholder pending a human decision**, min 8 chars, no default in any environment) alongside the existing `ADMIN_SESSION_SECRET`; both fail closed. Verified against the seeded dev database over real HTTP: full lunch-service walkthrough (pack → cash → pickup) on both cash and card, every error path, `PENDING` orders refused for packing, the cash guard refusing a handover, card refund through the (simulated) Stripe seam with the seat released 6→5 and stock deliberately unchanged, 15-way concurrent races on all four order actions each resolving to exactly one change, 40 concurrent stock adjustments landing exactly ±40 with 40 distinct returned quantities, 20 concurrent checkouts interleaved with 20 concurrent adjustments composing exactly and deadlock-free, login rate limiting (10 × 401 then 429, malformed bodies counted too), all four fail-closed configuration modes, and a full-log PII grep returning zero hits for any test student's name, email, phone or pickup code. `tsc --noEmit`, full `eslint .`, `next build` (all eight routes `ƒ` dynamic) clean; the pre-existing suite re-run green at 106 + 25 |
 | 2026-09-02 | P2 | `GET /api/products` and `GET /api/slots` shipped and documented in §6. `lib/validation.ts` added with `productQuerySchema` (`checkoutSchema` follows in P3, deliberately not stubbed). Two hardenings over the spec sketch, both noted in `HANDOFF.md` §P2: `excludeAllergens` tokens are validated against the `Allergen` enum instead of passed through as free strings, and a bad query param returns `INVALID_INPUT` instead of an unhandled `ZodError`. Verified against the seeded dev database with curl in both `next dev` and `next build && next start` — allergen exclusion confirmed to drop a product on ANY match (`PEANUTS` removes Trail Mix Bag, whose list is `PEANUTS`/`TREE_NUTS`/`SOY`), `remaining`/`full` confirmed against `book_slot()`-modified counts, `Cache-Control: no-store` confirmed on both, both routes confirmed `ƒ` (dynamic) in the production build |
