@@ -2323,3 +2323,61 @@ Against the seeded dev Postgres, `next dev`, real HTTP, real cookie jars:
 two windows, `REFUND_FAILED` and `alreadyRefundedAtStripe` against real Stripe, a
 production build (so the `Secure` cookie and the production fail-closed paths are
 reasoned rather than observed), and any of this in a real browser.
+
+---
+
+## P4 — frontend (staff admin UI) · 2026-09-04
+
+### 59. [backend] Missing endpoint: no way to list ALL products for the stock-adjustment screen
+
+`POST /api/admin/products/[productId]/stock` (§6a) takes a `productId` and
+applies a delta — that part is fully specified and `components/admin/StockAdjuster.tsx`
+calls it exactly as documented. What's missing is anything that lists the
+products to adjust *against*. There is no `GET /api/admin/products`, and the
+two real endpoints that exist don't cover the catalog:
+
+- `GET /api/products` (public) filters to `active = true AND stockQty > 0`
+  (§6, "Sold-out items are not in this response... zero-stock products are
+  simply absent here"). That's correct for the student-facing catalog and
+  wrong for a restock screen — the products staff most need to adjust are
+  exactly the sold-out and deactivated ones.
+- `GET /api/admin/orders` (§6a) returns `productTotals` per slot, which
+  includes sold-out/deactivated products **if and only if they had an order
+  today**. A product that's inactive with zero orders today is invisible to
+  both endpoints.
+
+**What I built instead of stubbing a route:** `StockAdjuster` unions the two
+real responses above (`GET /api/products` ∪ every slot's `productTotals` for
+the currently-loaded day) into one list, and says so in the UI — "products
+currently for sale, plus anything ordered today that has since sold out or
+been deactivated. A product that is both inactive and had no orders today
+won't appear here yet." This is real, documented data, not a fabricated
+endpoint or a hardcoded list, but it is a genuine coverage gap: a product
+added inactive, or one that sold out days ago and stayed deactivated, cannot
+be restocked from this screen at all right now.
+
+**Request:** `GET /api/admin/products` — every product, `active` and
+`stockQty` both unfiltered, staff-session-gated like the rest of §6a
+(`id`, `name`, `category`, `rarity`, `allergens`, `stockQty`, `active` is
+enough; no order/PII fields belong on it, same rule as everything else in
+§6a). Once it exists, `StockAdjuster`'s union hack goes away in one commit —
+the component already isolates the two-source merge behind a single `rows`
+computation so swapping the data source is small.
+
+### 60. [manager] What was NOT built, and why — read before assuming a gap is a bug
+
+- **No admin Playwright/E2E spec.** `tests/**` is qa-owned (CLAUDE.md §1); I
+  ran the flows by hand against a live `next dev` + seeded dev database
+  instead (see the verification note I'll leave for the manager to attach
+  here). A scripted keyboard-only pass and an automated axe scan on `/admin`
+  are qa's next step, not something I substituted with a manual claim.
+- **No slotId filter control on the dashboard.** The API supports
+  `?slotId=` (date is ignored when present); the task's ask was "grouped by
+  pickup slot", which the default full-day view already does, so I left the
+  per-slot filter out rather than adding UI surface nobody asked for. Trivial
+  to add against the existing `load()` query-building if wanted.
+- **No persistent record of who took an action.** `sessionId` from `GET
+  /api/admin/session` is available but I didn't wire it into the UI as an
+  attributed "packed by" — §54 already establishes there's no audit trail by
+  design (shared passcode, no roster), so displaying a session id next to an
+  action would imply an identity guarantee the system doesn't actually make.

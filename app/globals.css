@@ -155,3 +155,48 @@ body {
     transition-duration: .01ms !important;
   }
 }
+
+/*
+ * Staff admin print stylesheet (P4, docs/HANDOFF.md's "usable printed"
+ * requirement). Scoped to three classes only used under app/admin — cannot
+ * affect the shop, checkout, or confirmation screens.
+ *
+ * `.admin-print-root`  — wraps the whole dashboard; forces a light,
+ *                         ink-cheap palette instead of the dark theme.
+ * `.admin-no-print`    — controls, nav chrome, and every action button;
+ *                         a printed sheet has no click handlers.
+ * `.admin-page-break`  — keeps one slot section / one order card from
+ *                         splitting across a page edge.
+ */
+@media print {
+  .admin-no-print {
+    display: none !important;
+  }
+
+  .admin-print-root {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  .admin-print-root * {
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    clip-path: none !important;
+    border-color: #000 !important;
+    color: #000 !important;
+  }
+
+  /* Allergen warnings and the "not shown / inactive" flags must survive a
+     black-and-white printer, so they lean on weight + underline rather than
+     the on-screen red — never on colour alone even here. */
+  .admin-print-root .text-danger,
+  .admin-print-root [role="note"] {
+    font-weight: 700;
+    text-decoration: underline;
+  }
+
+  .admin-page-break {
+    break-inside: avoid;
+  }
+}

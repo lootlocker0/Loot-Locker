@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!--
+    LootLockers favicon — "monogram" direction, see
+    components/brand/LockerMark.tsx for the full write-up and the other two
+    directions (shield / locker). Static file (not the React component)
+    because Next.js's app/icon.svg convention requires a literal SVG file;
+    coordinates and colors are kept in sync by hand with the "monogram"
+    variant of LockerMark — if that shape ever changes, update both.
+
+    Geometric mark only: two beveled gold bars forming an angular "L", the
+    same bevel direction as the .clip-shard utility used on every primary
+    CTA in the app (docs/DESIGN.md "Shard geometry"). No mascot, no
+    third-party asset.
+  -->
+  <rect x="4" y="4" width="92" height="92" fill="#07070F" />
+  <path fill="#F5C518" d="M26 8L44 8L36 80L18 80Z M18 80L88 80L80 94L10 94Z" />
+</svg>

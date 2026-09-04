@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCart } from "@/stores/cart";
+import { LockerMark } from "@/components/brand/LockerMark";
 
 const LINKS = [
   { href: "/snacks", label: "The Locker" },
@@ -29,8 +30,9 @@ export function Nav() {
       >
         <Link
           href="/"
-          className="font-display text-xl uppercase tracking-wide text-brand"
+          className="flex items-center gap-2 font-display text-xl uppercase tracking-wide text-brand"
         >
+          <LockerMark size={22} />
           LootLockers
         </Link>
 
