@@ -59,7 +59,16 @@ export default async function Home() {
     <div className="flex min-h-full flex-col">
       <Nav />
       <main className="flex-1">
-        <section className="clip-hero border-b border-white/5 bg-surface-lowest px-4 py-20 text-center sm:px-8">
+        <section
+          className="clip-hero relative overflow-hidden border-b border-white/5 bg-surface-lowest px-4 py-20 text-center sm:px-8"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(11, 13, 18, 0.68), rgba(11, 13, 18, 0.8)), url('/logo.png')",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
+            backgroundSize: "cover",
+          }}
+        >
           <LockerMark
             variant="shield"
             size={88}
