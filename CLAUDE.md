@@ -53,8 +53,7 @@ Violating one of these is a stop-and-report, not a work-around.
    read-then-write in app code.
 5. **Order lines snapshot** name, price, rarity, allergens at purchase time.
 6. **No PII in URLs, logs, or analytics.** These are children.
-7. **No third-party IP** in copy, assets, or product names.
-8. **Allergen data is safety-critical.** Never inferred, never defaulted, never
+7. **Allergen data is safety-critical.** Never inferred, never defaulted, never
    truncated in UI. Missing allergen data blocks publication.
 
 ---
