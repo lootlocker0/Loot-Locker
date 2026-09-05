@@ -32,8 +32,12 @@ export function Nav() {
           href="/"
           className="flex items-center gap-2 font-display text-xl uppercase tracking-wide text-brand"
         >
-          <LockerMark size={22} />
-          LootLockers
+          <img
+            src="/logo.png"
+            alt="LootLockers logo"
+            className="h-8 w-8 rounded-md object-cover"
+          />
+          <span className="hidden sm:inline">LootLockers</span>
         </Link>
 
         <ul className="flex items-center gap-6">
