@@ -241,3 +241,278 @@ export const adminStockAdjustSchema = z.object({
     }),
   // No `reason` field. See the note in adminRefundSchema.
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P4b — restricted inventory editor (app/api/inventory/**)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// These schemas ARE the authorisation boundary's second half. The first half is
+// lib/inventory-session.ts, which decides *who* is calling; this decides *what
+// they may write*, and the answer is "named columns of Product, nothing else".
+//
+// Three rules hold across every schema below, and each one is load-bearing:
+//
+//   1. `.strict()` everywhere. An unknown key is a 400, never a silently
+//      dropped one. `{"stockQty": 999}` on the edit route, `{"status": "PAID"}`
+//      anywhere, a typo — all rejected loudly. Zod's default is to strip
+//      unknown keys, which would let a client believe a write happened.
+//   2. No field here names anything outside Product. There is no order id, no
+//      email, no setting key, no Stripe anything to put in a body.
+//   3. Allergens are affirmed explicitly, never inferred (CLAUDE.md §2.8).
+//      See `allergensReviewed` below.
+//
+// The route handlers additionally copy parsed fields into Prisma one by one
+// rather than spreading the parsed object, so even a schema mistake cannot turn
+// into an unintended column write.
+
+/// `POST /api/inventory/login`. A single shared passcode, distinct from the
+/// staff one — see lib/inventory-session.ts.
+export const inventoryLoginSchema = z
+  .object({
+    /// Not trimmed, same reasoning as adminLoginSchema.
+    passcode: z.string().min(1).max(200),
+  })
+  .strict();
+
+/// Product name. Same 2..80 bounds as a student name — a catalog row printed on
+/// a pick list has the same width budget as anything else on it.
+const productName = z.string().trim().min(2).max(80);
+
+/// Shown to students on the catalog card. Required and non-empty on create:
+/// there is no honest default for "what is this snack", and an empty
+/// description on a shelf item is how a product ships unexplained.
+const productDescription = z.string().trim().min(1).max(400);
+
+/// Integer cents, and bounded on BOTH sides deliberately.
+///
+/// This is the one field in this role's scope that is money. `POST
+/// /api/checkout` reprices every cart from `Product.priceCents` (CLAUDE.md
+/// §2.2), so whatever is written here is what a card is charged. The bounds are
+/// guard rails around a fat finger, not a pricing policy:
+///
+///   · min 1 cent — a zero-price product is a free-snack backdoor, and there is
+///     deliberately no comp/free-order path in this system (docs/HANDOFF.md
+///     §56). If free items are genuinely wanted that is a human decision.
+///   · max 5000 cents ($50) — two orders of magnitude above a $1.75 snack.
+///     `1795` typed for `175` is caught by a human noticing; `17500` is caught
+///     here.
+///
+/// Both numbers are flagged in docs/HANDOFF.md for confirmation.
+const productPriceCents = z
+  .number()
+  .int("Price must be a whole number of cents")
+  .min(1, "Price must be at least 1 cent")
+  .max(5_000, "Price looks too high — enter cents, not dollars");
+
+/// Absolute stock, accepted ONLY at creation time. See
+/// `inventoryStockAdjustSchema` for why every later change is a delta.
+const productStockQty = z
+  .number()
+  .int("Stock must be a whole number")
+  .min(0)
+  .max(10_000);
+
+/// Display ordering on the catalog page. Cosmetic; lower sorts first.
+const productSortOrder = z.number().int().min(0).max(9_999);
+
+/// Photo location.
+///
+/// Two accepted shapes and nothing else:
+///
+///   /products/foo.svg      site-relative, which is what prisma/seed.ts writes
+///                          and what `public/` serves today
+///   https://host/foo.jpg   an absolute HTTPS URL
+///
+/// Rejected on purpose: `http://` (a mixed-content image on an HTTPS school
+/// page silently fails to load), `data:` (megabytes of base64 in a String
+/// column), `javascript:`/`blob:`/`file:`, and protocol-relative `//host/x`
+/// — which reads as a path and behaves as a remote origin, so it is exactly the
+/// value that slips a third-party URL past a naive "starts with /" check.
+///
+/// This field is a URL, not an upload. There is no upload endpoint and none is
+/// stubbed: real object storage needs a real credential nobody has issued yet
+/// (docs/HANDOFF.md, P4b). A remote host here is also a third-party request
+/// from a student's browser, so a `NEXT_PUBLIC_SITE_URL`-relative path stays the
+/// recommendation until an allow-list is agreed.
+const productImageUrl = z
+  .string()
+  .trim()
+  .min(1, "A photo URL is required")
+  .max(512)
+  .refine(
+    (v) => {
+      if (v.startsWith("//") || v.includes("\\")) return false;
+      if (v.startsWith("/")) return /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/.test(v);
+      try {
+        return new URL(v).protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    {
+      message:
+        "Use a site path like /products/name.svg or a full https:// address",
+    },
+  );
+
+/// The allergen list itself. Validated against the `Allergen` enum and
+/// de-duplicated; an unrecognised token is a 400, never a quietly dropped one,
+/// for the same reason `excludeAllergens` rejects them: a mis-spelled allergen
+/// that validates is a product that appears tagged and filters as untagged.
+const productAllergens = z
+  .array(z.enum(Allergen))
+  .max(11)
+  .transform((list) => [...new Set(list)]);
+
+/// The affirmation. `true` and only `true`.
+///
+/// An empty `allergens` array is legitimate — a bottle of water contains none of
+/// Canada's priority allergens — and it is indistinguishable, as data, from a
+/// form nobody filled in. That ambiguity is the whole risk CLAUDE.md §2.8 is
+/// about, and it already exists in the seeded catalog (docs/HANDOFF.md §16: 8
+/// products assert "no allergens" without review).
+///
+/// So the review is carried explicitly instead of being read out of the array's
+/// length. `allergens: []` with `allergensReviewed: true` means "checked, none
+/// present" and is accepted. `allergens: []` without it, or with `false`, is
+/// refused with ALLERGENS_NOT_REVIEWED.
+///
+/// The alternative — demanding at least one allergen — is worse than useless: it
+/// teaches an editor to tick a box that is not true in order to save a bottle of
+/// water, and a false PEANUTS tag is how students learn to ignore the tags.
+///
+/// NOT PERSISTED. There is no column for it, so this is an affirmation at the
+/// moment of writing and not a durable record that a review happened. A
+/// `allergensReviewedAt` column would make it durable and is flagged in
+/// docs/HANDOFF.md as a schema decision, not one to make silently here.
+const allergensReviewed = z.literal(true, {
+  message: "Confirm the allergen list has been checked",
+});
+
+/// `POST /api/inventory/products` — create.
+///
+/// Everything is required except `slug` and `sortOrder`. Nothing is defaulted:
+/// a create route that fills in blanks is a create route that invents catalog
+/// data, and one of these blanks is allergens.
+export const inventoryProductCreateSchema = z
+  .object({
+    name: productName,
+
+    /// Optional. Derived from `name` when absent (lib/db/inventory.ts). The
+    /// stable key seeds and fixtures upsert on, so it is settable exactly once,
+    /// at creation, and never editable afterwards — a renamed slug turns the
+    /// next seed run into a duplicate insert rather than an update.
+    slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .min(2)
+      .max(64)
+      .regex(
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        "Use lower-case letters, numbers and single hyphens",
+      )
+      .optional(),
+
+    description: productDescription,
+    priceCents: productPriceCents,
+    category: z.enum(PRODUCT_CATEGORIES),
+
+    /// In the scope list as "type" only by a generous reading, and required by
+    /// the schema with no default. Included because it is cosmetic display data
+    /// that cannot touch money or PII, and because defaulting every new product
+    /// to COMMON would be the same kind of silent inference the allergen rule
+    /// exists to forbid. Flagged in docs/HANDOFF.md.
+    rarity: z.enum(Rarity),
+
+    allergens: productAllergens,
+    allergensReviewed,
+
+    /// Absolute, and correct here specifically because the row does not exist
+    /// yet: nothing can have reserved stock on a product that has never been
+    /// saved, so there is no concurrent write to clobber. Every subsequent
+    /// change is a delta.
+    stockQty: productStockQty,
+
+    imageUrl: productImageUrl,
+
+    /// Explicit. A product that appears in the shop the instant it is saved,
+    /// because the field defaulted to `true`, is a publication nobody decided
+    /// to make.
+    active: z.boolean(),
+
+    sortOrder: productSortOrder.optional(),
+  })
+  .strict();
+
+export type InventoryProductCreate = z.infer<typeof inventoryProductCreateSchema>;
+
+/// `PATCH /api/inventory/products/[productId]` — edit.
+///
+/// Every field optional, at least one required. Note what is NOT here:
+///
+///   · `stockQty` — an absolute set is a read-then-write (CLAUDE.md §2.4). Use
+///     the stock route. `.strict()` turns an attempt into a 400 rather than a
+///     silent no-op, so a client cannot believe it adjusted stock here.
+///   · `slug` — the stable seed key, write-once at creation.
+///   · anything at all outside Product.
+export const inventoryProductUpdateSchema = z
+  .object({
+    name: productName.optional(),
+    description: productDescription.optional(),
+    priceCents: productPriceCents.optional(),
+    category: z.enum(PRODUCT_CATEGORIES).optional(),
+    rarity: z.enum(Rarity).optional(),
+    allergens: productAllergens.optional(),
+    allergensReviewed: allergensReviewed.optional(),
+    imageUrl: productImageUrl.optional(),
+    active: z.boolean().optional(),
+    sortOrder: productSortOrder.optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "Nothing to change",
+  })
+  // ── The publish gate, at the request boundary ──────────────────────────────
+  // Changing the allergen list, or putting a product in front of students,
+  // requires the affirmation in the same request.
+  //
+  // One further gate needs the stored row and therefore lives in the route:
+  // publishing a product whose allergen list is EMPTY additionally requires the
+  // empty list to be transmitted explicitly, so the affirmation is made against
+  // a list somebody actually looked at rather than against a blank column.
+  .refine((v) => !(v.allergens !== undefined && v.allergensReviewed !== true), {
+    path: ["allergensReviewed"],
+    message: "Confirm the allergen list has been checked",
+  })
+  .refine((v) => !(v.active === true && v.allergensReviewed !== true), {
+    path: ["allergensReviewed"],
+    message: "Confirm the allergen list before putting this on sale",
+  });
+
+export type InventoryProductUpdate = z.infer<typeof inventoryProductUpdateSchema>;
+
+/// `POST /api/inventory/products/[productId]/stock`.
+///
+/// A RELATIVE change, exactly like the staff route, and for exactly the same
+/// reason: "set stock to 7" is a read-then-write with a human in the middle, and
+/// a checkout that reserved a unit between the count and the submit gets
+/// silently un-reserved (CLAUDE.md §2.4). The person counting the box is
+/// thirteen, which is an argument for computing the delta for them in the UI —
+/// not for relaxing the invariant, which does not care who is holding the
+/// clipboard.
+///
+/// Bounded tighter than the staff route's ±10000: this role restocks a shelf
+/// from a delivery, and a four-digit correction on a school snack catalog is a
+/// typo far more often than it is a pallet.
+export const inventoryStockAdjustSchema = z
+  .object({
+    delta: z
+      .number()
+      .int()
+      .refine((n) => n !== 0, { message: "Adjustment cannot be zero" })
+      .refine((n) => Math.abs(n) <= 1_000, {
+        message: "Adjustment is too large",
+      }),
+  })
+  .strict();

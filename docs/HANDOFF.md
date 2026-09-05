@@ -2381,3 +2381,382 @@ computation so swapping the data source is small.
   attributed "packed by" — §54 already establishes there's no audit trail by
   design (shared passcode, no roster), so displaying a session id next to an
   action would imply an identity guarantee the system doesn't actually make.
+
+---
+
+## P4b — backend (restricted inventory editor) · 2026-09-05
+
+Shipped: `POST /api/inventory/login`, `POST /api/inventory/logout`,
+`GET /api/inventory/session`, `GET`+`POST /api/inventory/products`,
+`GET`+`PATCH /api/inventory/products/[productId]`,
+`POST /api/inventory/products/[productId]/stock`, plus `lib/inventory-session.ts`,
+`lib/db/inventory.ts`, four schemas in `lib/validation.ts`, four error codes in
+`lib/errors.ts`, and `scripts/verify-inventory-isolation.mjs`. All six routes are
+published in `docs/API-CONTRACT.md` §6b.
+
+**Not touched, deliberately:** `app/api/admin/**`, `lib/admin-session.ts`,
+`lib/db/admin.ts`, `prisma/**`, `app/(shop)/**`, `components/**`, `stores/**`,
+`tests/**`. P4b adds **no migration and no `manual_constraints.sql` change** —
+the stock route reuses P4's `adjust_stock()`, so nothing needs re-applying to any
+database.
+
+**There is no `/inventory` UI.** Backend built the API and the contract; the
+screen is frontend's, against §6b.
+
+### 61. [human, escalation — CLAUDE.md §7] Who these two people are allowed to be, and what the credential really opens
+
+The requirement was met literally: `/api/inventory/*` cannot reach an order, an
+order item, a student's name, email, phone or homeroom, a payment status, a
+refund, Stripe, or a setting. That is enforced at the route and auth level and
+proved mechanically (§68). Three things about it still need a human.
+
+1. **The passcode is shared, and it is a placeholder — same as §53.** One value
+   in `INVENTORY_PASSCODE`, held by two people, no roster. The log can say "the
+   same browser created these four products" and can never say which of the two
+   made a change. With two known family members that is a far smaller problem
+   than a staff room of volunteers, but if you ever need to answer "who set this
+   price", the answer today is "nobody knows". `.env.example` states in capitals
+   that this must not be the same string as `ADMIN_PASSCODE`; **nothing in code
+   can enforce that**, because the server only ever sees two independent hashes.
+   If you want it enforced, say so and I will add a boot-time refusal when the
+   two digests match.
+2. **This role can set the price a student is charged.** `POST /api/checkout`
+   reprices every cart from `Product.priceCents` (CLAUDE.md §2.2), so a price
+   written here is what a card is charged. The scope you gave includes price, so
+   it is in — but be clear-eyed: a thirteen-year-old editing prices is a
+   money-write, even though they cannot see a payment. Guard rails I added
+   unilaterally are in §62. If price should be staff-only, it is a one-line
+   removal from `inventoryProductUpdateSchema` and a paragraph in §6b.
+3. **This role can publish and un-publish products.** `active: true` puts an item
+   in front of students. That is the intended scope ("active flag"), and it is
+   why the allergen affirmation is stricter here than anywhere else in the
+   system (§63).
+
+### 62. [human] Two numbers I picked alone: the price bounds
+
+`priceCents` is bounded **1 to 5000** at the request boundary. Neither number came
+from you.
+
+- **Minimum 1 cent.** A zero-price product is a free-snack backdoor, and §56
+  records that there is deliberately no comp/free-order path. Refusing `0` keeps
+  the "can anything be given away" decision where it belongs — with you.
+- **Maximum 5000 cents ($50).** Two orders of magnitude above a $1.75 snack.
+  `1795` typed for `175` is caught by a human noticing; `17500` is caught here.
+
+If a $0 promotional item or a $60 catering tray is a real case, these are two
+constants in `lib/validation.ts`. I would rather be told than guess wider.
+
+### 63. [manager/human — schema decision] The allergen affirmation is enforced but not stored
+
+**What is enforced now.** Every create, every allergen edit and every publish must
+carry `"allergensReviewed": true`, refused at the validation layer with
+`ALLERGENS_NOT_REVIEWED`. Publishing a product whose stored allergen list is
+*empty* additionally requires the empty list to be restated explicitly. Full
+detail and the reasoning are in §6b.
+
+**Why an affirmation rather than "at least one allergen required",** which is the
+stricter-sounding reading of the task: an empty list is legitimate — a bottle of
+water contains none of Canada's priority allergens — and is byte-identical to a
+form nobody filled in. Demanding a non-empty list teaches an editor to tick a box
+that is not true in order to save the water, and a false `PEANUTS` tag is how
+students learn to ignore the tags. The review is therefore transmitted, never
+inferred from the array's length. **This is a deviation from the literal wording
+of the task ("reject a create/publish with missing/empty allergen data") and it
+is the one place I did not follow it to the letter.** Flagging it rather than
+burying it; if you want empty lists banned outright, say so.
+
+**What is NOT stored, and this is the ask.** There is no column for the
+affirmation, so `Product.allergens = []` still cannot be distinguished from
+"never reviewed" by anything reading the table — including the public catalog and
+`GET /api/admin/orders`. §16's eight seeded rows are still eight seeded rows;
+this API only stops them being *re-published* without a fresh look.
+
+Making it durable is a schema change (`allergensReviewedAt DateTime?`, and
+arguably `allergensReviewedBy` — which is a PII/retention decision, CLAUDE.md
+§7, and the same decision §54 is waiting on). I did not make it alone: it touches
+`prisma/schema.prisma`, which every agent and the whole qa suite build against,
+and it needs a migration applied everywhere. **Decision needed**, and it is the
+single change that would most improve allergen safety across the whole system.
+
+### 64. [human, blocking a real photo workflow] No upload endpoint exists, and none was stubbed
+
+BUILDPLAN §P4b proposes Vercel Blob and flags it as unconfirmed. There is no Blob
+token in this environment, so I did not wire one up and I did not build a fake
+upload route that silently does nothing — the same call `lib/stripe/payments.ts`
+makes about the missing Stripe account, and the same reason CLAUDE.md §1 gives
+for not stubbing a blocked endpoint.
+
+**What exists:** `imageUrl` is a validated `String` — site-relative
+(`/products/foo.svg`, what the seed writes) or absolute `https://`. `http://`,
+protocol-relative `//host/x`, `data:`, `javascript:` and `blob:` are refused
+(§6b has the table).
+
+**What that costs today:** an editor cannot take a photo on a phone and attach
+it. They can only reference a file that already exists — which means somebody
+with repo access adding a file to `public/`, i.e. exactly the "doesn't survive a
+redeploy, isn't multi-editor-safe" problem BUILDPLAN named. **For the two people
+this feature is for, this is the part that will feel broken first.**
+
+**What is needed from you** — one credential and one decision:
+
+- Vercel Blob (`BLOB_READ_WRITE_TOKEN`), S3, Cloudflare R2 or Supabase Storage.
+  Region matters: CLAUDE.md/P5 requires Canadian data residency, and a child's
+  photo of a snack is low-risk, but the account and the bucket policy are not.
+- Whether uploads are size- and type-limited server-side (they should be: images
+  only, a few MB, re-encoded rather than trusted).
+
+Once a token exists this is a small, self-contained route in the same namespace:
+`POST /api/inventory/uploads` returning a URL the editor then saves via `PATCH`.
+Nothing about the current contract changes — `imageUrl` stays a string.
+
+### 65. [qa] WHERE TO ATTACK WHAT P4b LANDED
+
+Per the backend definition of done. Every item is a real hole or a real trap in
+code I just wrote.
+
+**The concurrency case each route is genuinely vulnerable to**
+
+- **`PATCH` is last-write-wins, with no optimistic concurrency token, and the
+  publish gate is decided on a stale read.** The handler loads the product,
+  evaluates the allergen/publish rules against that snapshot, then writes. The
+  interleaving that matters: editor A sends `{"active":true,
+  "allergensReviewed":true}` while editor B sends `{"allergens":["PEANUTS"],
+  "allergensReviewed":true}`. Both succeed. Depending on order, the product can
+  end up **active with an allergen list that was never affirmed together with the
+  publish decision**. Two editors, so it is low-frequency, not impossible.
+  Attack it directly, and also try A's publish racing a B `PATCH` that empties
+  the list — the "stored empty list must be restated" gate is evaluated before
+  the write and can be satisfied by a list that no longer exists by the time the
+  write lands.
+  **Why I did not fix it with an `updatedAt` precondition:** `updated_at` is
+  touched by `reserve_stock()` on every checkout and by `adjust_stock()` on every
+  adjustment, so a conditional write would reject legitimate edits every time a
+  student buys the item mid-edit — during a lunch service, constantly. The right
+  fix is a dedicated version column or a field-scoped merge, and it is a schema
+  decision (§63). Recorded rather than hidden.
+- **`POST /api/inventory/products` races on the `slug` unique index.** Two
+  editors saving the same name derive the same slug; exactly one INSERT survives
+  and the other gets `PRODUCT_SLUG_TAKEN`. That is the intended behaviour and it
+  is a real race worth confirming — fire 10 identical creates and assert exactly
+  one row exists, one 201, nine 409s, and **no partially-created product**.
+- **The stock route is the one place I am confident**, because it is P4's
+  `adjust_stock()` unchanged: check and write in one UPDATE. Verified 20-way
+  (§68). The case I did *not* run is inventory adjustments interleaved with live
+  checkouts on the same product — P4 ran that shape for `/api/admin`, and it
+  should compose identically here, but "should" is not "did".
+- **`POST /api/inventory/products` + a concurrent checkout.** A product created
+  `active: true` with stock is immediately purchasable. Create-then-immediately-
+  buy is not a race I exercised.
+
+**Auth and boundary attacks worth trying beyond what I ran**
+
+- I proved the boundary with **cookie swaps and forged/renamed tokens** (§68).
+  What I did *not* try: presenting **both** cookies at once with conflicting
+  values, a `ll_inventory` cookie set on a subpath, cookie-name case games
+  (`LL_Inventory`), duplicate `Cookie` headers, and an oversized cookie. Next's
+  cookie parser is the thing under test there, not my code.
+- **CSRF.** `SameSite=Lax` is the whole defence and it holds only while no
+  `/api/inventory` GET has a side effect. `scripts/verify-inventory-isolation.mjs`
+  asserts that statically; a browser-level cross-origin `fetch` and a
+  form-POST from another origin against `POST /api/inventory/products` would
+  confirm it for real. Nothing here sets CORS headers.
+- **`scripts/verify-inventory-isolation.mjs` is a grep, and greps have
+  blind spots.** It strips comments and matches `db.order`, `db.setting`,
+  forbidden imports, GET-writes, missing session gates and the response
+  projection — it would NOT catch a violation written as
+  `db["ord"+"er"].findMany()` or reached through a helper in a file it does not
+  scan (it scans `app/api/inventory/**`, `lib/inventory-session.ts` and
+  `lib/db/inventory.ts` only). If you add a route that imports a new helper,
+  add that helper to the scanned set. **Please wire this script into
+  `.github/workflows/**` — that is qa-owned and I did not touch it.** A negative
+  control is included in §68 so you can see it actually fires.
+- **The runtime half of the proof is not automated.** I ran it by hand (§68);
+  converting it into `tests/api/inventory-isolation.test.ts` is qa's, and the
+  assertions that matter are: an inventory cookie gets 401 from every
+  `/api/admin/*` route and `ORDER_NOT_FOUND` from `/api/orders/*`, and every
+  inventory response body matches `/^(?!.*(@|studentName|homeroom|pickupCode|orderNumber)).*$/s`.
+
+**Traps that are behaviour, not bugs**
+
+- `PRODUCT_UNAVAILABLE` is **409, not 404**, for an unknown product — inherited
+  from P4's stock route so the two namespaces agree. A malformed id answers
+  identically.
+- `PATCH {"stockQty": 7}` is a **400**, not a silent no-op. Assert the 400; a
+  client that believes it set stock here is the failure this refuses.
+- The allergen refusal is `ALLERGENS_NOT_REVIEWED` (400), not `INVALID_INPUT`.
+- Login limits are **5/IP and 30 global per 5 min**, in a key space separate from
+  `admin:login:*`. Confirm that burning the inventory bucket does **not** lock
+  staff out — that separation is deliberate and is the kind of thing a refactor
+  silently merges.
+
+### 66. [frontend/manager] §59 is still open — `GET /api/inventory/products` is NOT the endpoint you asked for
+
+§59 asked for `GET /api/admin/products` so `components/admin/StockAdjuster.tsx`
+could stop unioning two responses. I did **not** build it: this task explicitly
+scoped me out of `app/api/admin/**`, and adding a route there would also have
+meant touching the system this phase exists to keep separate.
+
+`GET /api/inventory/products` returns exactly the shape §59 described — every
+product, `active` and `stockQty` unfiltered — but it is gated on the **inventory**
+session. A staff `ll_admin` cookie gets a 401 (verified). So the staff stock
+screen cannot use it, and `StockAdjuster`'s union hack stands.
+
+**Manager decision:** either (a) authorise a `GET /api/admin/products` in a
+follow-up — it is ten lines and reuses `INVENTORY_PRODUCT_SELECT` — or (b) decide
+that staff restocking moves to the inventory screen, in which case staff need the
+inventory passcode and §61.1's separation is weakened. I recommend (a): the two
+roles genuinely both need a product list, and duplicating a read is much cheaper
+than sharing a credential.
+
+### 67. [manager] Judgement calls I made alone, each flagged rather than buried
+
+1. **`rarity` and `description` are editable by this role, and required on
+   create.** Neither is in the verbatim scope list ("name, category/type, price,
+   photo, allergens, active flag, stock quantity"), but `Product` has no default
+   for either, so a create route must get them from somewhere. Defaulting rarity
+   to `COMMON` would be exactly the silent inference the allergen rule forbids,
+   and a blank description ships an unexplained item to students. Both are
+   cosmetic catalog data that cannot touch money or PII. Say the word and either
+   becomes staff-only.
+2. **Absolute stock at create, relative forever after.** The one place the task
+   asked me to think. At creation the row does not exist, so no reservation can
+   be clobbered and an absolute quantity is correct; afterwards the shelf is live
+   and an absolute set is a read-then-write (CLAUDE.md §2.4). I did **not** add a
+   compare-and-set "set to N if it is still M" variant — it is implementable as a
+   new SQL function, but it needs a `manual_constraints.sql` change applied
+   everywhere, and P4's "compute the delta in the UI" guidance already covers the
+   shelf-count workflow. Ask if you want it.
+3. **Every request schema is `.strict()`.** Unknown keys are 400s, not silently
+   stripped. This is stronger than the admin schemas and it is the second half of
+   the authorisation boundary: `{"status":"PAID"}`, `{"orderId":…}` and a
+   client-supplied `id` are all refused loudly. It does mean a frontend that
+   sends an extra debug field gets a 400 — deliberate.
+4. **Separate rate-limit key space, with tighter budgets** (5/IP and 30 global
+   per 5 min, versus the staff route's 10/60). Sharing the global bucket would
+   couple the availability of the staff locker screen to abuse of the catalog
+   passcode. Nobody is standing in a queue while an inventory editor is locked
+   out, so the stricter number is the cheaper failure.
+5. **`PRODUCT_SLUG_TAKEN` rather than auto-suffixing** a `-2`. Two near-identical
+   catalog rows is a mistake worth stopping in front of the person making it.
+6. **`slug` is write-once.** Editable slugs break `prisma/seed.ts`'s upsert
+   idempotency (P1 gate), turning the next seed run into duplicate inserts.
+7. **8-hour session, `SameSite=Lax`, `Path=/`** — mirrors §55.10 for the same
+   reasons, including that `Path=/` is a rendering convenience and never the
+   authorisation boundary.
+8. **No rate limiting on the write routes**, only on login — consistent with P4,
+   where only login is limited. The exposure is an authenticated editor spamming
+   catalog rows, bounded by validation. If you would rather have a budget, it is
+   one line per route, but note it inherits the fail-closed Redis mode (§19).
+9. **`INVENTORY_PASSCODE` deliberately has no relationship to `ADMIN_PASSCODE`
+   in code.** They are compared as independent hashes; the server cannot tell if
+   an operator sets them equal. `.env.example` says not to in capitals. See
+   §61.1 if you want that enforced at boot.
+10. **The isolation check is a script in `scripts/`, not a test in `tests/`.**
+    `tests/**` is qa-owned (CLAUDE.md §1). It is written to be run from CI
+    unchanged and it exits non-zero on violation.
+
+### 68. [manager] Verification actually run, so you can judge what is untested
+
+Against the seeded dev Postgres over real HTTP, with real cookie jars. **113
+runtime assertions, 0 failures**, plus the static checks.
+
+**The isolation boundary — the hard requirement, both directions**
+
+- `node scripts/verify-inventory-isolation.mjs` passes: 8 inventory source files
+  scanned for 26 forbidden patterns (`db.order`, `db.orderItem`, `db.setting`,
+  `db.pickupSlot`, `db.webhookEvent`, `getSetting(`, imports of
+  `lib/stripe/*`, the Stripe SDK, `lib/admin-session`, `lib/order-session`,
+  `lib/db/admin`, `lib/db/release`, `lib/email`, `lib/settings`, raw SQL against
+  `orders`/`order_items`/`settings`/`pickup_slots`/`webhook_events`,
+  `reserve_stock`, `book_slot`, and the PII column names) — **zero hits**; every
+  handler gates on `requireInventorySession` (login and logout excepted by
+  design, login checked for passcode verification instead); no GET writes; the
+  response projection is 14 whitelisted `Product` columns; no file outside the
+  namespace imports the inventory session or names `ll_inventory`; neither
+  session module reads the other's environment variables.
+- **Negative control**, so the script is not decorative: a temporary route
+  containing `db.order.findMany()`, a write in a `GET`, and no session gate
+  produced exactly those three findings and exit code 1. Then deleted.
+- **A staff `ll_admin` cookie is refused on all six inventory routes** (401
+  `INVENTORY_UNAUTHORIZED`), and so is a staff token **renamed onto**
+  `ll_inventory` — the cross-secret check, both directions.
+- **An inventory cookie is refused on all seven admin routes** (401
+  `ADMIN_UNAUTHORIZED`: `session`, `orders`, `products/[id]/stock`, and
+  `orders/[n]/{pack,pickup,cash,refund}`), and every one of those bodies was
+  checked to contain no order data. An inventory token renamed onto `ll_admin`
+  is likewise 401.
+- **`GET /api/orders/LL-…` with an inventory cookie** → `ORDER_NOT_FOUND`; the
+  inventory token renamed onto `ll_ord_LL-…` → `ORDER_NOT_FOUND`.
+  **`GET /api/cron/sweep` with an inventory cookie** → 401.
+- A full product list body contains **no `@`, and no
+  `email`/`phone`/`studentName`/`homeroom`/`pickupCode`/`orderNumber`/
+  `paymentIntent`/`totalCents` key**, and every row's keys are inside the
+  14-column whitelist.
+
+**Functionality**
+
+- List returns **all 23 products** against a direct SQL count, including the
+  inactive and the zero-stock ones, with `counts` matching SQL; the public
+  catalog is strictly smaller. `Cache-Control: no-store`.
+- Create: 201 with a slug derived from the name, allergens de-duplicated,
+  `active:false` honoured (no default publish); duplicate name → 409
+  `PRODUCT_SLUG_TAKEN` carrying the slug.
+- Allergen gate: create without `allergens`, with `[]` and no affirmation, with
+  `allergensReviewed:false`, and with an unrecognised token (`MILK`) → all
+  `ALLERGENS_NOT_REVIEWED`. **The water case** — `allergens: []` +
+  `allergensReviewed: true` + `active: true` — is accepted, as designed.
+  `PATCH {"active":true}` without affirmation → refused; with affirmation but a
+  stored **empty** list and no restated list → refused; with `allergens: []`
+  restated → 200.
+- Refusals: price `0`, `17500`, `1.75`, `"175"`; category `candy`; rarity
+  `MYTHIC`; `imageUrl` of `javascript:`, `//evil.example.com/x.png`,
+  `http://…`, `data:…`; `stockQty: -1`; unknown keys `status`, `orderId`, `id`;
+  `PATCH` of `stockQty`, `slug`, `id`; an empty `PATCH` body. `https://` and
+  site-relative image URLs accepted. Patches confirmed **in the database**, not
+  just in the response.
+- Stock: `+5` → 200 with authoritative and previous quantities; `0`, `1.5`,
+  `5000`, `-9999`, an unknown key and an attempted absolute `stockQty` all
+  rejected; a delta that would go negative → `STOCK_ADJUSTMENT_REJECTED`;
+  unknown/malformed product id → `PRODUCT_UNAVAILABLE`; **an inactive product is
+  still adjustable**; **20 concurrent `+1` → exactly +20, 20 distinct returned
+  quantities, no 500s**.
+- End to end into the shop: a product created here appears in `GET /api/products`
+  once active and in stock, and the allergens written here drive
+  `?excludeAllergens=DAIRY`. Verification rows deleted afterwards; the dev
+  catalog is back to 23.
+
+**Auth and configuration**
+
+- Wrong passcode 401; malformed body 400; an extra key in the login body 400;
+  **5 × 401 then 429 from one IP, a second IP unaffected**; tampered signature
+  401; logout clears the cookie (`Max-Age=0`) and works without a session.
+- Cookie in dev: `ll_inventory=v1.<sid>.<exp>.<mac>; Path=/; Max-Age=28800;
+  HttpOnly; SameSite=lax`, no `Secure` (correct for http dev). **In a production
+  build (`next build && next start`), `Secure` is present.**
+- All four configuration modes: `configured`; passcode `unset` → 503; passcode
+  `too-short` (7 chars) → 503; `unconfigured-production` (no
+  `INVENTORY_SESSION_SECRET`, `NODE_ENV=production`) → 503, and it fails closed
+  **before** the rate limiter. **In every one of those modes staff sign-in still
+  returned 200** — the two systems' availability is independent, not just their
+  data.
+
+**Hygiene**
+
+- `npx tsc --noEmit`, full `npx eslint .` and `npx next build` clean; all six
+  inventory routes report `ƒ` (Dynamic).
+- **PII grep of every server log from this run** (dev, both misconfigured boots,
+  and the production start) against all 50 seeded orders' names, emails, phones,
+  homerooms and pickup codes: **zero hits**. The only `@` in the logs is an npm
+  package name.
+- **Secret scan of the build output**: 304 files in `.next/static` and
+  `.next/server/app` grepped for `INVENTORY_SESSION_SECRET`,
+  `INVENTORY_PASSCODE`, their dev values and `ll_inventory` — zero hits. (`npm
+  run test:leaks` still finds no test files; that suite does not exist yet.)
+- **Pre-existing suites re-run green, zero regressions: 25 unit, 40 api, 66
+  concurrency.**
+
+**Not tested by me, and this is qa's job rather than a gap I am hiding:**
+everything in §65 — the two-editor `PATCH` race, concurrent identical creates,
+inventory adjustments interleaved with live checkouts, create-then-immediately-
+buy, browser-level CSRF, cookie-parser edge cases, and any of this in a real
+browser.

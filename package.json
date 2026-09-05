@@ -14,6 +14,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:constraints": "psql \"${DIRECT_URL:-$DATABASE_URL}\" -v ON_ERROR_STOP=1 -f prisma/migrations/manual_constraints.sql",
     "db:setup": "npm run db:migrate && npm run db:constraints && prisma db seed",
+    "verify:inventory": "node scripts/verify-inventory-isolation.mjs",
     "test:unit": "QA_NO_SERVER=1 vitest run tests/unit",
     "test:concurrency": "vitest run tests/concurrency",
     "test:api": "vitest run tests/api",

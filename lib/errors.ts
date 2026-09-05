@@ -72,6 +72,44 @@ export const ERROR_CODES = {
     status: 409,
     message: "That stock adjustment would leave a negative quantity.",
   },
+
+  // ── P4b, restricted inventory editor (app/api/inventory/**) ───────────────
+  // Deliberately their OWN codes rather than reusing ADMIN_UNAUTHORIZED. The
+  // two roles are separate systems (lib/inventory-session.ts): a client that
+  // receives one of these must show the inventory sign-in form, never the staff
+  // one, and a 401 in one namespace must never read as a hint about the other.
+
+  /// No inventory session cookie, an expired or forged one, a cookie signed
+  /// with some other system's secret (a staff `ll_admin` token renamed onto
+  /// `ll_inventory` lands here), or a wrong passcode at the login route.
+  INVENTORY_UNAUTHORIZED: {
+    status: 401,
+    message: "Inventory sign-in required.",
+  },
+  /// INVENTORY_SESSION_SECRET or INVENTORY_PASSCODE is missing, or the passcode
+  /// is too short to be worth anything. Fail closed and say so rather than
+  /// falling back to a default — see lib/inventory-session.ts.
+  INVENTORY_NOT_CONFIGURED: {
+    status: 503,
+    message: "Inventory sign-in is not configured on this server.",
+  },
+  /// A product with this slug already exists. Detail: `slug`. Raised instead of
+  /// silently suffixing a unique-enough slug, because two near-identical
+  /// products in a catalog is a mistake worth stopping, not a naming problem
+  /// worth solving automatically.
+  PRODUCT_SLUG_TAKEN: {
+    status: 409,
+    message: "A product with that name already exists.",
+  },
+  /// Allergen data is missing or unreviewed on a create, an allergen edit, or a
+  /// publish (CLAUDE.md §2.8 — never inferred, never defaulted). Detail:
+  /// `fields`, the same shape INVALID_INPUT uses, so one form renderer handles
+  /// both. Separate from INVALID_INPUT because this one is a safety refusal and
+  /// a client should be able to say so in those words.
+  ALLERGENS_NOT_REVIEWED: {
+    status: 400,
+    message: "Allergens must be reviewed before a product can be saved.",
+  },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
