@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { Nav } from "@/components/layout/Nav";
 import { Footer } from "@/components/layout/Footer";
 import { ProductGrid } from "@/components/ProductGrid";
+import { LockerMark } from "@/components/brand/LockerMark";
 
 // `/` sits outside the `(shop)` route group (frontend.md §6 wants it built at
 // the literal `app/page.tsx`), so it can't pick up `app/(shop)/layout.tsx`'s
@@ -59,6 +60,12 @@ export default async function Home() {
       <Nav />
       <main className="flex-1">
         <section className="clip-hero border-b border-white/5 bg-surface-lowest px-4 py-20 text-center sm:px-8">
+          <LockerMark
+            variant="shield"
+            size={88}
+            glow
+            className="mx-auto mb-6"
+          />
           <p className="clip-shard-tight mx-auto mb-6 w-fit border-2 border-brand px-3 py-1 font-mono text-xs uppercase tracking-widest text-brand">
             Season 01
           </p>

@@ -104,6 +104,83 @@ export async function createOrderPaymentIntent(args: {
   return { id: intent.id, clientSecret: intent.client_secret };
 }
 
+export interface OrderRefund {
+  id: string;
+  amountCents: number;
+  /// True when Stripe reports the charge was already fully refunded, i.e. this
+  /// call was a no-op rather than a second refund. Staff see "already refunded",
+  /// and the order is still moved to REFUNDED because that is the true state.
+  alreadyRefunded: boolean;
+}
+
+/// Refunds an order in full at Stripe. P4 staff admin only.
+///
+/// `amountCents` is the caller's stored `order.totalCents` and is never a
+/// client-supplied number (CLAUDE.md §2.2) — it is passed explicitly rather
+/// than defaulting to Stripe's full-charge amount so that the refund is
+/// anchored to what our own books say the order cost. If Stripe's charge and
+/// our order ever disagree, the amount we recorded is the one we owe back.
+///
+/// THROWS on failure, on purpose. The caller must not mark an order REFUNDED
+/// for money that did not move; leaving it PAID and reporting REFUND_FAILED is
+/// recoverable, and the opposite is a snack given away and a parent still
+/// charged.
+export async function refundOrderPayment(args: {
+  orderId: string;
+  intentId: string;
+  amountCents: number;
+}): Promise<OrderRefund> {
+  if (SIMULATED || isSimulatedIntentId(args.intentId)) {
+    logEvent("stripe_simulated_refund", {
+      orderId: args.orderId,
+      amountCents: args.amountCents,
+    });
+    const digest = createHash("sha256").update(`refund:${args.orderId}`).digest("hex");
+    return {
+      id: `re_sim_${digest.slice(0, 24)}`,
+      amountCents: args.amountCents,
+      alreadyRefunded: false,
+    };
+  }
+
+  try {
+    const refund = await stripe.refunds.create(
+      {
+        payment_intent: args.intentId,
+        amount: args.amountCents,
+        metadata: { orderId: args.orderId },
+      },
+      // Keyed on the order, so a double-clicked refund button, a retried
+      // request, or two staff phones pressing at once all resolve to ONE
+      // refund. Stripe expires idempotency keys after 24 hours, which is why
+      // `charge_already_refunded` below is handled as success rather than as an
+      // error: a second attempt the next day must not look like a failure that
+      // invites a third.
+      { idempotencyKey: `re_${args.orderId}` },
+    );
+    return {
+      id: refund.id,
+      amountCents: refund.amount,
+      alreadyRefunded: false,
+    };
+  } catch (e) {
+    if (
+      e &&
+      typeof e === "object" &&
+      "code" in e &&
+      (e as { code?: string }).code === "charge_already_refunded"
+    ) {
+      logEvent("stripe_refund_already_refunded", { orderId: args.orderId });
+      return {
+        id: "",
+        amountCents: args.amountCents,
+        alreadyRefunded: true,
+      };
+    }
+    throw e;
+  }
+}
+
 /// Best-effort cancel, used by the expiry sweep before it releases an order.
 /// Never throws: "already succeeded", "already cancelled" and "no such intent"
 /// are all normal races here, and none of them should stop the sweep from
