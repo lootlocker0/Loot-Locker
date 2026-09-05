@@ -452,3 +452,68 @@ export async function spend(email: string, cents: number, slotId: string) {
   if (r.status !== 200) throw new Error(`spend(${cents}) failed: ${r.status} ${r.text}`);
   return r;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Staff admin (§6a) and inventory editor (§6b)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * `tests/setup/env.ts` does NOT pin these — `next dev` reads them from the
+ * repo's `.env`, which is where the dev values live. Kept as constants here so
+ * a suite that needs to prove the two credentials are different has something
+ * to compare, and so a missing `.env` fails with a readable message rather than
+ * a wall of 503s.
+ */
+export const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE ?? "dev-staff-passcode";
+export const INVENTORY_PASSCODE = process.env.INVENTORY_PASSCODE ?? "dev-inventory-passcode";
+
+async function loginCookie(path: string, passcode: string): Promise<string> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-for": `10.7.7.${ipCounter++ % 250}` },
+    body: JSON.stringify({ passcode }),
+  });
+  if (res.status !== 200) {
+    throw new Error(
+      `${path} failed ${res.status}: ${await res.text()}\n` +
+        `The dev server reads ADMIN_PASSCODE / INVENTORY_PASSCODE from the repo's ` +
+        `.env (tests/setup/env.ts deliberately does not override them). If this is ` +
+        `a 503, that file is missing or the passcode is under 8 characters.`,
+    );
+  }
+  const cookies = res.headers.getSetCookie?.() ?? [];
+  return cookies.map((c) => c.split(";")[0]).join("; ");
+}
+
+export const adminCookie = () => loginCookie("/api/admin/login", ADMIN_PASSCODE);
+export const inventoryCookie = () => loginCookie("/api/inventory/login", INVENTORY_PASSCODE);
+
+export async function adminPost(
+  path: string,
+  cookie: string,
+  body: unknown = {},
+): Promise<ApiResponse> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify(body),
+  });
+  return readResponse(res);
+}
+
+export async function inventoryRequest(
+  method: "GET" | "POST" | "PATCH",
+  path: string,
+  cookie: string,
+  body?: unknown,
+): Promise<ApiResponse> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers: {
+      cookie,
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  return readResponse(res);
+}

@@ -207,7 +207,19 @@ if (!selectBlock) {
 // checkout route that started honouring `ll_inventory` would be the same leak
 // running backwards.
 
-const OWNED = new Set(inventoryFiles.map((f) => relative(ROOT, f)));
+// app/inventory/page.tsx is the one sanctioned exception outside the backend
+// namespace above: docs/API-CONTRACT.md §6b explicitly allows a page to read
+// the bare cookie NAME as a first-paint rendering hint ("which form to draw
+// before the real request"), never as authorization — the identical pattern
+// app/admin/page.tsx already uses for ll_admin. It does not import
+// lib/inventory-session.ts and does not verify or decode the cookie; that
+// still happens only via GET /api/inventory/session. Excluded here by name,
+// not folded into `inventoryFiles` above, so it never inflates the P4b
+// backend file-count sanity check a few lines up.
+const OWNED = new Set([
+  ...inventoryFiles.map((f) => relative(ROOT, f)),
+  "app/inventory/page.tsx",
+]);
 for (const dir of ["app", "lib", "components", "stores"]) {
   const full = join(ROOT, dir);
   let files;

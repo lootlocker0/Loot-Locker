@@ -1,6 +1,5 @@
 import type { OrderStatus } from "@prisma/client";
 import { formatCents } from "@/lib/money";
-import { rarityMeta } from "@/lib/rarity";
 import { OrderActions } from "./OrderActions";
 import type { AdminOrder } from "./types";
 
@@ -92,7 +91,7 @@ export function OrderRow({
                 </span>
               )}
             </span>
-            <span className="shrink-0" style={{ color: rarityMeta(item.raritySnapshot).hex }}>
+            <span className="shrink-0 text-text">
               {formatCents(item.unitPriceCents * item.qty)}
             </span>
           </li>

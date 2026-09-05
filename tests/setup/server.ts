@@ -3,6 +3,7 @@ import { appendFileSync, writeFileSync, existsSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { BASE_URL, TEST_PORT, serverEnv } from "./env";
+import { resolveProjectDir } from "./project-dir";
 
 /**
  * The routes under test are driven over real HTTP against a `next dev` server,
@@ -43,8 +44,20 @@ async function waitForReady(timeoutMs = 180_000): Promise<void> {
     }
     await new Promise((res) => setTimeout(res, 500));
   }
+  const log = readServerLog();
+  if (log.includes("Another next dev server is already running")) {
+    throw new Error(
+      `The dev server could not start: another \`next dev\` already holds this ` +
+        `project's lock (Next 16 allows one per project directory).\n\n` +
+        `In this repo that is usually another agent's \`npm run dev\` on port 3000 ` +
+        `(CLAUDE.md §1 — three agents, one checkout). Either stop it, or run this ` +
+        `suite against an isolated mirror of the tree:\n\n` +
+        `  QA_PROJECT_DIR=/tmp/lootlockers-qa-mirror npx vitest run\n\n` +
+        `--- server log ---\n${log.slice(-2000)}`,
+    );
+  }
   throw new Error(
-    `dev server never became ready on ${BASE_URL} (${lastErr})\n--- server log ---\n${readServerLog().slice(-4000)}`,
+    `dev server never became ready on ${BASE_URL} (${lastErr})\n--- server log ---\n${log.slice(-4000)}`,
   );
 }
 
@@ -81,7 +94,14 @@ export async function startServer(): Promise<void> {
   // `next` process, and SIGTERM to `npx` alone leaves that child running and
   // holding port 3111 — the next run then silently talks to a stale server with
   // stale environment variables.
-  child = spawn("npx", ["next", "dev", "--port", String(TEST_PORT)], {
+  // "." unless QA_PROJECT_DIR is set. Next 16 admits one `next dev` per project
+  // directory (`<distDir>/lock`), so another agent's `npm run dev` on port 3000
+  // kills this suite before a single test runs, with "Another next dev server
+  // is already running." — an error that has nothing to do with the code under
+  // test. See tests/setup/project-dir.ts.
+  const projectDir = resolveProjectDir();
+
+  child = spawn("npx", ["next", "dev", projectDir, "--port", String(TEST_PORT)], {
     cwd: process.cwd(),
     env: serverEnv(),
     stdio: ["ignore", "pipe", "pipe"],

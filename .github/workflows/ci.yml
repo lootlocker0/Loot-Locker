@@ -41,6 +41,15 @@ jobs:
       # that look like route bugs (HANDOFF §28).
       ORDER_SESSION_SECRET: qa-order-session-secret-value
       ADMIN_SESSION_SECRET: qa-admin-secret
+      # `tests/setup/env.ts` deliberately does NOT pin the two passcodes — the
+      # dev server reads them from the environment, which locally means `.env`.
+      # CI has no `.env`, so without these every P4/P4b route answers 503
+      # ADMIN_NOT_CONFIGURED / INVENTORY_NOT_CONFIGURED and the admin suites
+      # fail for a reason that is not the code. They must differ from each
+      # other: API-CONTRACT §6b's separation is untestable if they match.
+      ADMIN_PASSCODE: qa-staff-passcode
+      INVENTORY_SESSION_SECRET: qa-inventory-session-secret
+      INVENTORY_PASSCODE: qa-inventory-passcode
       RESEND_API_KEY: re_placeholder
       NEXT_PUBLIC_SITE_URL: http://127.0.0.1:3111
 
@@ -61,6 +70,28 @@ jobs:
 
       - run: npx tsc --noEmit
       - run: npx eslint .
+
+      # docs/HANDOFF.md §65 asked qa to wire this in: a static proof that no
+      # `/api/inventory` source file names a forbidden model, imports the staff
+      # session module / Stripe / lib/settings / lib/db/{admin,release}, writes
+      # on a GET, skips the session gate, or returns a column outside the
+      # fourteen-name whitelist. It exits non-zero on violation and it is a
+      # grep, so it is a floor and not a ceiling — the runtime half is
+      # `tests/concurrency/admin-inventory.test.ts` and `tests/e2e/inventory.spec.ts`.
+      #
+      # ⚠ CURRENTLY RED, on a false positive, and left red on purpose.
+      # `app/inventory/page.tsx:21` does `jar.has("ll_inventory")` as a
+      # first-paint hint — the pattern API-CONTRACT §6b explicitly sanctions and
+      # that `app/admin/page.tsx` already uses for `ll_admin`. The script's
+      # "nothing outside the namespace may name this cookie" rule has no
+      # allowlist for it, because the rule was written before the P4b frontend
+      # landed. That is a one-line fix in a backend-owned file
+      # (`scripts/verify-inventory-isolation.mjs`) — either allowlist that path
+      # or require an import/validation context rather than the bare name.
+      # qa is NOT allowlisting it here: deciding a boundary check may be skipped
+      # is not qa's call, and a red step is the thing that gets it fixed.
+      - name: Inventory isolation (static)
+        run: npm run verify:inventory
 
       # Pure unit tests: no server, no fixtures, fast.
       - name: Unit
@@ -88,12 +119,81 @@ jobs:
         if: failure()
         run: tail -n 400 "${TMPDIR:-/tmp}/lootlockers-qa-server.log" || true
 
-# NOT WIRED UP YET, deliberately, rather than added as always-green filler:
-#
-#   · Playwright E2E (qa.md §5). `/checkout` and `/order/[orderNumber]` do not
-#     exist yet — frontend is gated on this suite per BUILDPLAN P3 step 2. A
-#     spec written against pages that do not exist is either skipped or lying.
-#   · Bundle secret-leak grep (qa.md §6). Needs `next build`, which is a
-#     separate concern from the P3 checkout gate and belongs with the E2E job.
-#
+  # ───────────────────────────────────────────────────────────────────────────
+  # P5. A separate job, not extra steps on `test`, for one hard reason: Next 16
+  # allows exactly one `next dev` per project directory (`<distDir>/lock`), and
+  # Playwright needs its own server on its own port and its own database. Two
+  # jobs get two runners and cannot contend.
+  # ───────────────────────────────────────────────────────────────────────────
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: looplockers
+          POSTGRES_PASSWORD: looplockers_dev
+          POSTGRES_DB: looplockers_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U looplockers"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      E2E_DATABASE_URL: postgresql://looplockers:looplockers_dev@localhost:5432/looplockers_e2e?sslmode=disable
+      DATABASE_URL: postgresql://looplockers:looplockers_dev@localhost:5432/looplockers_e2e?sslmode=disable
+      DIRECT_URL: postgresql://looplockers:looplockers_dev@localhost:5432/looplockers_e2e?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx next typegen
+
+      - run: npx playwright install --with-deps chromium
+
+      # Desktop AND mobile viewports; both projects run by default.
+      # `playwright.config.ts` owns the server, the database and the seed.
+      - name: E2E (desktop + mobile), keyboard-only, axe
+        run: npx playwright test
+
+      # The shipped-artifact scan. Runs its own `next build`, so it must come
+      # after the E2E job's server has stopped — hence last, and hence
+      # QA_FORCE_BUILD, so it never scans a stale `.next` from an earlier step.
+      - name: Bundle secret / PII / design-token scan
+        run: npx vitest run tests/leaks
+        env:
+          QA_NO_SERVER: "1"
+          QA_FORCE_BUILD: "1"
+          STRIPE_SECRET_KEY: sk_test_placeholder
+          STRIPE_WEBHOOK_SECRET: whsec_qa_local_testing_secret
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_placeholder
+          CRON_SECRET: qa-cron-secret-value
+          ORDER_SESSION_SECRET: qa-order-session-secret-value
+          ADMIN_SESSION_SECRET: qa-admin-secret
+          ADMIN_PASSCODE: qa-staff-passcode
+          INVENTORY_SESSION_SECRET: qa-inventory-session-secret
+          INVENTORY_PASSCODE: qa-inventory-passcode
+          RESEND_API_KEY: re_placeholder
+          NEXT_PUBLIC_SITE_URL: http://localhost:3210
+
+      - name: Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
 # Both are the next QA task once frontend lands, not an omission to forget.

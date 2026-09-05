@@ -291,8 +291,8 @@ export function OrderConfirmation({ orderNumber }: { orderNumber: string }) {
                     {item.qty}× {item.nameSnapshot}
                   </p>
                   <span
-                    className="mt-1 inline-block font-mono text-[10px] uppercase tracking-wide"
-                    style={{ color: meta.hex }}
+                    className="mt-1 inline-block px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-void"
+                    style={{ background: meta.hex }}
                   >
                     {meta.label}
                   </span>

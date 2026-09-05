@@ -28,7 +28,7 @@ export function SlotPicker({
           return (
             <label
               key={s.id}
-              className={`clip-shard-tight cursor-pointer border-2 px-4 py-2 font-mono text-[13px] transition-colors ${
+              className={`clip-shard-tight cursor-pointer border-2 px-4 py-2 font-mono text-[13px] transition-colors focus-within:outline focus-within:outline-[3px] focus-within:outline-gold ${
                 s.full
                   ? "cursor-not-allowed border-white/10 text-text-faint opacity-50"
                   : selected

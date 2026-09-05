@@ -13,7 +13,6 @@ import { ShardButton } from "@/components/ui/ShardButton";
 import { SlotPicker } from "@/components/ui/SlotPicker";
 import { ProgressTracker } from "@/components/ui/ProgressTracker";
 import { ProductImage } from "@/components/ui/ProductImage";
-import { rarityMeta } from "@/lib/rarity";
 import { formatCents, sumLines } from "@/lib/money";
 import { PaymentStep } from "./PaymentStep";
 import { StripeErrorBoundary } from "./StripeErrorBoundary";
@@ -435,7 +434,7 @@ export function CheckoutForm() {
                 ).map((opt) => (
                   <label
                     key={opt.value}
-                    className={`clip-panel flex-1 cursor-pointer border-2 p-4 transition-colors ${
+                    className={`clip-panel flex-1 cursor-pointer border-2 p-4 transition-colors focus-within:outline focus-within:outline-[3px] focus-within:outline-gold ${
                       paymentMethod === opt.value
                         ? "border-gold bg-gold/10"
                         : "border-white/10 bg-surface-2 hover:border-brand/50"
@@ -482,7 +481,6 @@ export function CheckoutForm() {
 
           <ul className="mt-4 flex flex-col gap-3">
             {known.map(({ line, product }) => {
-              const meta = rarityMeta(product.rarity);
               return (
                 <li key={product.id} className="flex items-start gap-3">
                   <div className="h-12 w-12 shrink-0 overflow-hidden bg-surface-lowest">
@@ -516,7 +514,7 @@ export function CheckoutForm() {
                       </p>
                     )}
                   </div>
-                  <p className="shrink-0 font-mono text-sm" style={{ color: meta.hex }}>
+                  <p className="shrink-0 font-mono text-sm text-text">
                     {formatCents(product.priceCents * line.qty)}
                   </p>
                 </li>

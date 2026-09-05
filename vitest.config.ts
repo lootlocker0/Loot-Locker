@@ -10,6 +10,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // `tests/e2e/**` is Playwright's (`playwright.config.ts`), and vitest's
+    // default `include` of `**/*.spec.ts` would otherwise pick those files up
+    // and fail on `import { test } from "@playwright/test"` — a red suite that
+    // says nothing about the product. Run them with `npm run test:e2e`.
+    exclude: ["**/node_modules/**", "**/.git/**", "**/.next/**", "tests/e2e/**"],
     globalSetup: ["tests/setup/global-setup.ts"],
     // The test process and the server under test run in two DIFFERENT non-UTC
     // zones on purpose (the server gets Asia/Tokyo — tests/setup/env.ts).
